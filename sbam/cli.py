@@ -1,0 +1,92 @@
+import argparse
+import sys
+import os
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        prog="sbam",
+        description="SBAM: Structural and Base-Level Assessment of Microbes",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    
+    # Required inputs
+    parser.add_argument("-a", "--assembly", required=True, 
+                        help="Path to the consensus assembly (FASTA)")
+    parser.add_argument("-r", "--reads", required=True, 
+                        help="Path to the raw long reads (FASTQ)")
+    parser.add_argument("-o", "--outdir", required=True, 
+                        help="Directory to save the BAM files and HTML report")
+    
+    # Optional parameters
+    parser.add_argument("-t", "--threads", type=int, default=4, 
+                        help="Number of CPU threads for minimap2")
+    parser.add_argument("--buffer-size", type=int, default=50000, 
+                        help="Size of the cyclic buffer edge (bp) for mapping")
+    parser.add_argument("--read-type", choices=["map-ont", "map-pb"], default="map-ont", 
+                        help="Sequencing technology used (default: map-ont)")
+    
+    return parser.parse_args()
+
+def main():
+    args = parse_args()
+    
+    # Setup output directory
+    os.makedirs(args.outdir, exist_ok=True)
+    print(f"[INIT] Starting SBAM analysis...")
+    print(f"[INIT] Assembly: {args.assembly}")
+    print(f"[INIT] Output directory: {args.outdir}\n")
+  
+# Structural validation step
+    print("Structural Validation")
+
+    from sbam.struct.struct import GenomeArchitecture 
+    from sbam.struct.mapping import ReadAligner
+    from sbam.struct.eval import JunctionEvaluator
+    
+    # Initialize the architecture class
+    genome = GenomeArchitecture(args.assembly, args.outdir)
+    print(f" > Found {len(genome.records)} contig(s).")
+    
+    # Create the cyclic buffer
+    cyclic_fasta, orig_lengths = genome.create_cyclic_buffer(buffer_size=args.buffer_size)
+    print(f" > Cyclic buffer applied. Saved to: {cyclic_fasta}")
+        
+    # Align raw reads to the cyclic buffer
+    aligner = ReadAligner(args.reads, cyclic_fasta, args.outdir, args.threads)
+    bam_path = aligner.run_mapping(read_type=args.read_type)
+    
+    # Evaluate Junctions
+    evaluator = JunctionEvaluator(bam_path, orig_lengths)
+    junction_metrics = evaluator.evaluate_junctions()
+    
+    print("\n Junction Structural Scores")
+    for contig, metrics in junction_metrics.items():
+        length_kb = metrics['length'] / 1000
+        depth = metrics['avg_depth']
+        
+        # Format the output
+        print(f"   - {contig} ({length_kb:.1f} kb | Depth: {depth}x): "
+              f"Score {metrics['spanning_score']:.2f} [{metrics['status']}] "
+              f"({metrics['spanning_reads']} spanning / {metrics['broken_reads']} broken)")
+        
+    # Biological Validation
+    from sbam.struct.ori import PhysicsEngine
+    
+    physics = PhysicsEngine(args.assembly)
+    physics_metrics = physics.calculate_symmetry()
+    
+    print("\n Biological scores")
+    for contig, metrics in physics_metrics.items():
+        print(f"   - {contig}: Symmetry {metrics['symmetry']}° [{metrics['viability']}] "
+              f"(oriC ≈ {metrics['oric_pos']} bp, ter ≈ {metrics['ter_pos']} bp)")    
+
+    # Base-Level Validation
+    print("Base-Level Validation")
+    
+    print(" > Motif extraction pending implementation...\n")
+
+    # Reporting
+    print("Generating Dashboard")
+    
+    print(f"[DONE] SBAM execution finished successfully.")
+    return 0

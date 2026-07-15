@@ -1,0 +1,14 @@
+name: sbam-env
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.10
+  - minimap2>=2.26    # For long-read alignment
+  - samtools>=1.17    # For BAM file manipulation
+  - hmmer>=3.3.2      # For oriC/ter detection
+  - pysam>=0.22.0     # Python wrapper for samtools
+  - biopython>=1.81   # For FASTA parsing and GC
+  - scipy>=1.11.0     # For statistical testing
+  - jinja2>=3.1.2     # For HTML report generation
