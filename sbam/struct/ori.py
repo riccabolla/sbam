@@ -42,6 +42,9 @@ class PhysicsEngine:
             
             oric_pos = int(oric_window * window_size)
             ter_pos = int(ter_window * window_size)
+
+            plot_theta = [(i / len(cumulative_skew)) * 360 for i in range(len(cumulative_skew))]
+            plot_r = cumulative_skew.tolist()
             
             # Calculate the shortest distance along the circular genome
             distance = abs(oric_pos - ter_pos)
@@ -61,10 +64,13 @@ class PhysicsEngine:
                 viability = "SKEWED"
                 
             self.results[record.id] = {
+                "length": seq_len,
                 "oric_pos": oric_pos,
                 "ter_pos": ter_pos,
                 "symmetry": round(symmetry_degrees, 1),
-                "viability": viability
+                "viability": viability,
+                "plot_theta": plot_theta,
+                "plot_r": plot_r
             }
             
         return self.results
