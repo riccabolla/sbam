@@ -1,7 +1,7 @@
 import numpy as np
 from Bio import SeqIO
 
-class PhysicsEngine:
+class BioVal:
     def __init__(self, fasta_path):
         self.fasta_path = fasta_path
         self.records = list(SeqIO.parse(self.fasta_path, "fasta"))
