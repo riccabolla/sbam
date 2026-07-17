@@ -91,7 +91,7 @@ def main():
     # and returns a list of statistically significant discordant motifs.
     motif_results = fidelity.analyze_motifs()
     
-    print("\n > --- Top Systematic Error Motifs (by k-mer size) ---")
+    print("\n > Top Systematic Error Motifs (by k-mer size) ")
     
     if not motif_results:
         print("   No significant systematic error motifs detected. Basecalling is highly concordant.")
@@ -111,7 +111,7 @@ def main():
                           f"Fold Increase: {res['fold_increase']:.1f}x")
 
     # Reporting
-    print("\n[PHASE 3] Generating Dashboard")
+    print("\n Generating Dashboard")
     from sbam.report.report import DashboardBuilder
     
     builder = DashboardBuilder(args.outdir, args.assembly)
