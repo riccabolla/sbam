@@ -68,25 +68,64 @@ def main():
         print(f"   - {contig} ({length_kb:.1f} kb | Depth: {depth}x): "
               f"Score {metrics['spanning_score']:.2f} [{metrics['status']}] "
               f"({metrics['spanning_reads']} spanning / {metrics['broken_reads']} broken)")
-        
-    # Biological Validation
-    from sbam.struct.ori import PhysicsEngine
+
+    from sbam.struct.ori import BioVal
     
-    physics = PhysicsEngine(args.assembly)
+    physics = BioVal(args.assembly)
     physics_metrics = physics.calculate_symmetry()
     
     print("\n Biological scores")
     for contig, metrics in physics_metrics.items():
         print(f"   - {contig}: Symmetry {metrics['symmetry']}° [{metrics['viability']}] "
               f"(oriC ≈ {metrics['oric_pos']} bp, ter ≈ {metrics['ter_pos']} bp)")    
+        
+    # Biological Validation
+    print("\n Base-Level Validation")
 
-    # Base-Level Validation
-    print("Base-Level Validation")
+    from sbam.base.base import BaseAccuracy
     
-    print(" > Motif extraction pending implementation...\n")
+    # Calculate base-level accuracy and identify systematic error motifs
+    fidelity = BaseAccuracy(bam_path=bam_path, fasta_path=args.assembly, threads=args.threads)
+    
+    # analyze_motifs() automatically builds the profile, masks structural noise, 
+    # and returns a list of statistically significant discordant motifs.
+    motif_results = fidelity.analyze_motifs()
+    
+    print("\n > --- Top Systematic Error Motifs (by k-mer size) ---")
+    
+    if not motif_results:
+        print("   No significant systematic error motifs detected. Basecalling is highly concordant.")
+    else:
+        # Group the results by k-mer size for clean printing
+        for k in [4, 5, 6]:
+            print(f"\n   [{k}-mers]")
+            # Filter results for this specific k-mer length
+            k_results = [res for res in motif_results if res['kmer_size'] == k]
+            
+            if not k_results:
+                print("     No significant motifs detected.")
+            else:
+                for res in k_results[:3]: # Print the top 3 motifs for each k-mer size
+                    print(f"     {res['motif']} | Discordance Rate: {res['error_rate']:.1%} "
+                          f"({res['discordant_count']}/{res['occurrences']} hits) | "
+                          f"Fold Increase: {res['fold_increase']:.1f}x")
 
     # Reporting
-    print("Generating Dashboard")
+    print("\n[PHASE 3] Generating Dashboard")
+    from sbam.report.report import DashboardBuilder
     
-    print(f"[DONE] SBAM execution finished successfully.")
+    builder = DashboardBuilder(args.outdir, args.assembly)
+    masked_pct = fidelity.masked_pct if hasattr(fidelity, 'masked_pct') else 0
+    masked_bases = fidelity.masked_bases if hasattr(fidelity, 'masked_bases') else 0
+    
+    report_file = builder.generate_report(
+        junction_metrics=junction_metrics,
+        physics_metrics=physics_metrics,
+        motif_results=motif_results,
+        masked_bases=masked_bases, 
+        masked_pct=masked_pct
+    )
+    
+    print(f"\n[DONE] SBAM execution finished successfully.")
+    print(f"       View your report at: {report_file}")
     return 0
