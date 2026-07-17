@@ -8,7 +8,7 @@ class BioVal:
         self.results = {}
 
     def calculate_symmetry(self, window_size=1000):
-        print(" > [Physics] Calculating GC Skew and Replichore Symmetry...")
+        print(" >Calculating GC Skew and Replichore Symmetry...")
         
         for record in self.records:
             seq = str(record.seq).upper()
