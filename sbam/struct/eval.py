@@ -8,7 +8,7 @@ class JunctionEvaluator:
         self.results = {}
 
     def evaluate_junctions(self):
-        print(" > [pysam] Evaluating junction spanning scores and read depths...")
+        print(" > Evaluating junction spanning scores and read depths")
         bam = pysam.AlignmentFile(self.bam_path, "rb")
         
         for contig_id, orig_length in self.orig_lengths.items():
@@ -59,7 +59,7 @@ class JunctionEvaluator:
                     if orig_length < 50000:
                         status = "PASS" if score > 0.4 else "FAIL"
                     else:
-                        status = "PASS" if score > 0.65 else "FAIL"
+                        status = "PASS" if score > 0.6 else "FAIL"
                         
                 self.results[contig_id] = {
                     "length": orig_length,
