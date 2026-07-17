@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
     name="sbam",
     version="0.1.0",
-    description="Structural and Base-Level analysis of microbial assemblies",
+    description="Structural and Base-Level analysis of ONT microbial assemblies",
     packages=find_packages(),
     install_requires=[
         "pysam",

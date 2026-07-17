@@ -5,7 +5,7 @@ import os
 def parse_args():
     parser = argparse.ArgumentParser(
         prog="sbam",
-        description="SBAM: Structural and Base-Level Assessment of Microbes",
+        description="SBAM: Structural and Base-Level analysis of ONT microbial assemblies",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     
