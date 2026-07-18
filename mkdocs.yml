@@ -1,0 +1,18 @@
+site_name: sbam
+site_url: https://sbam.readthedocs.io/
+site_description: "Structural and base-level analysis of ONT microbial assemblies"
+site_author: "Riccardo Bollini"
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Usage: usage.md
+theme:
+  name: readthedocs
+  custom_dir: overrides
+
+markdown_extensions:
+  - admonition
+
+  - codehilite
+
+
