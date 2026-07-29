@@ -57,11 +57,11 @@ class BioVal:
             # Evaluate biological viability
             # If symmetry is between 165 and 180 degrees, it's highly viable.
             if 165 <= symmetry_degrees <= 180:
-                viability = "VIABLE"
+                viability = "ACCEPTABLE"
             elif 150 <= symmetry_degrees < 165:
                 viability = "WARNING"
             else:
-                viability = "SKEWED"
+                viability = "ATYPICAL"
                 
             self.results[record.id] = {
                 "length": seq_len,

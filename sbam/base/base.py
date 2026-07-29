@@ -1,57 +1,92 @@
 import math
 import pysam
 import numpy as np
+import multiprocessing as mp
 from collections import defaultdict
 from scipy.stats import binomtest
 from Bio import SeqIO
+
+def _multi_thread(args):
+
+    bam_path, contig, start, end, ref_seq_chunk = args
+    chunk_len = end - start
+    
+    depths = np.zeros(chunk_len, dtype=np.int32)
+    matches = np.zeros(chunk_len, dtype=np.int32)
+    
+    with pysam.AlignmentFile(bam_path, "rb") as bam:
+        for pileupcolumn in bam.pileup(contig, start, end, truncate=True, min_base_quality=0):
+            pos = pileupcolumn.reference_pos
+            local_idx = pos - start
+            
+            if local_idx < 0 or local_idx >= chunk_len:
+                continue
+                
+            depth = pileupcolumn.nsegments
+            depths[local_idx] = depth
+            
+            if depth == 0:
+                continue
+                
+            ref_base = ref_seq_chunk[local_idx]
+            
+            query_bases = pileupcolumn.get_query_sequences(add_indels=False)
+            match_count = sum(1 for qb in query_bases if qb.upper() == ref_base)
+            
+            matches[local_idx] = match_count
+            
+    return start, end, depths, matches
+
 
 class BaseAccuracy:
     def __init__(self, bam_path, fasta_path, threads=4, k_list=None, min_concordance=0.75, depth_variance_limit=2.5):
         self.bam_path = bam_path
         self.fasta_path = fasta_path
+        self.threads = threads
         self.k_list = k_list if k_list else [4, 5, 6]
         self.min_concordance = min_concordance
         self.depth_variance_limit = depth_variance_limit
         
-        # Load the longest contig
         self.primary_contig = max(SeqIO.parse(self.fasta_path, "fasta"), key=lambda r: len(r.seq))
         self.seq_len = len(self.primary_contig.seq)
+        
         self.original_contig_id = self.primary_contig.id
         self.bam_contig_id = f"{self.original_contig_id}_cyclic"
         self.ref_seq = str(self.primary_contig.seq).upper()
+        
+        self.masked_bases = 0
+        self.masked_pct = 0.0
 
     def build_fidelity_profile(self):
         """
-        Generates genome-wide depth and concordance arrays
+        Chunks the genome and delegates pileup to multiprocessing workers.
         """
-        print(f" > Profiling base concordance for {self.original_contig_id} ({self.seq_len} bp)...")
+        print(f" > [Fidelity] Profiling base concordance for {self.original_contig_id} ({self.seq_len} bp) using {self.threads} threads...")
         
+        chunk_size = math.ceil(self.seq_len / self.threads)
+        tasks = []
+        for i in range(self.threads):
+            start = i * chunk_size
+            end = min((i + 1) * chunk_size, self.seq_len)
+            if start >= end: 
+                break
+            ref_seq_chunk = self.ref_seq[start:end]
+            tasks.append((self.bam_path, self.bam_contig_id, start, end, ref_seq_chunk))
+            
         depth_arr = np.zeros(self.seq_len, dtype=int)
-        concord_arr = np.ones(self.seq_len, dtype=float) # Default perfect concordance
+        concord_arr = np.ones(self.seq_len, dtype=float) 
         
-        # Open BAM file
-        with pysam.AlignmentFile(self.bam_path, "rb") as bam:
-            # truncate=True ensures to only read exactly within [0, seq_len)
-            for pileupcolumn in bam.pileup(self.bam_contig_id, 0, self.seq_len, truncate=True, min_base_quality=0):
-                pos = pileupcolumn.reference_pos
-                depth = pileupcolumn.nsegments
-                
-                if depth == 0 or pos >= self.seq_len:
-                    continue
-                    
-                ref_base = self.ref_seq[pos]
-                
-                # fast path get all bases at this position instantly
-                # This avoids looping through every single read object
-                query_bases = pileupcolumn.get_query_sequences(add_indels=False)
-                
-                # Count how many uppercase query bases match the reference
-                matches = sum(1 for qb in query_bases if qb.upper() == ref_base)
-                
-                depth_arr[pos] = depth
-                concord_arr[pos] = matches / depth if depth > 0 else 0.0
+        # Execute parallel workers
+        with mp.Pool(processes=self.threads) as pool:
+            results = pool.map(_multi_thread, tasks)
+            
+        # Reassemble arrays
+        for start, end, d_chunk, m_chunk in results:
+            depth_arr[start:end] = d_chunk
+            # Calculate concordance safely
+            valid_mask = d_chunk > 0
+            concord_arr[start:end][valid_mask] = m_chunk[valid_mask] / d_chunk[valid_mask]
 
-        # Masking structural noise: identify bases with depth outside the expected range
         median_depth = np.median(depth_arr[depth_arr > 0])
         if np.isnan(median_depth):
             median_depth = 1  
@@ -59,27 +94,23 @@ class BaseAccuracy:
         upper_depth = median_depth * self.depth_variance_limit
         lower_depth = median_depth / self.depth_variance_limit
         
-        # Boolean mask: True for bases to be masked (either too high/low depth or low concordance)
         mask_arr = (depth_arr > upper_depth) | (depth_arr < lower_depth) | (concord_arr < self.min_concordance)
         
-        masked_count = np.sum(mask_arr)
-
-        self.masked_bases = int(masked_count)
+        self.masked_bases = int(np.sum(mask_arr))
         self.masked_pct = (self.masked_bases / self.seq_len) * 100 if self.seq_len > 0 else 0.0
+        
         print(f"   - Median Depth: {median_depth:.1f}x")
-        print(f"   - Masked {masked_count} bases ({(masked_count/self.seq_len)*100:.2f}%) due to structural noise/discordance.")
+        print(f"   - Masked {self.masked_bases} bases ({self.masked_pct:.2f}%) due to structural noise/discordance.")
         
         return concord_arr, mask_arr
 
     def analyze_motifs(self):
         """
-        Scans unmasked regions to find sequence motifs with statistically significant
-        basecalling errors (discordance).
+        Scans unmasked regions to find sequence motifs with statistically significant basecalling errors.
         """
         concord_arr, mask_arr = self.build_fidelity_profile()
         print(f" > [Fidelity] Testing systematic errors in {self.k_list}-mer motifs...")
         
-        # mask cumsum allows O(1) checks for whether a k-mer window overlaps any masked bases
         mask_cumsum = np.zeros(self.seq_len + 1, dtype=int)
         mask_cumsum[1:] = np.cumsum(mask_arr)
         
@@ -90,7 +121,7 @@ class BaseAccuracy:
             motif_discordant = defaultdict(int)
             
             for i in range(self.seq_len - k + 1):
-                # check if this k-mer overlaps any masked bases
+                # O(1) mask lookup
                 if (mask_cumsum[i+k] - mask_cumsum[i]) > 0:
                     continue
                     
@@ -104,7 +135,6 @@ class BaseAccuracy:
                 if concord_arr[center_idx] < self.min_concordance:
                     motif_discordant[kmer] += 1
                     
-            # statistical testing for each k-mer
             total_bases_checked = sum(motif_totals.values())
             total_discordant_bases = sum(motif_discordant.values())
             
@@ -118,8 +148,6 @@ class BaseAccuracy:
                     continue
                     
                 discordant_count = motif_discordant[kmer]
-                
-                # Binomial test
                 test = binomtest(k=discordant_count, n=total, p=global_error_rate, alternative='greater')
                 
                 if test.pvalue < 0.01:
