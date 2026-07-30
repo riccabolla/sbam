@@ -75,4 +75,13 @@ sbam \
 -t, --threads
 
 Number of CPU threads to use. (Default: 4)
+
+--buffer-size BUFFER_SIZE
+
+Size of the cyclic buffer edge (bp) for mapping (default: 50000)
+
+--read-type {map-ont,map-pb}
+
+Sequencing technology used (default: map-ont)
+
 ```
