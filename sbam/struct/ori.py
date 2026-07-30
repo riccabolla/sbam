@@ -60,9 +60,9 @@ class BioVal:
             if 165 <= symmetry_degrees <= 180:
                 viability = "ACCEPTABLE"
             elif 150 <= symmetry_degrees < 165:
-                viability = "WARNING"
-            else:
                 viability = "ATYPICAL"
+            else:
+                viability = "WARNING"
                 
             self.results[record.id] = {
                 "length": seq_len,
