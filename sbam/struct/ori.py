@@ -1,6 +1,7 @@
 import numpy as np
 from Bio import SeqIO
 
+
 class BioVal:
     def __init__(self, fasta_path):
         self.fasta_path = fasta_path
