@@ -1,5 +1,5 @@
 import pysam
-import os
+
 
 class JunctionEvaluator:
     def __init__(self, bam_path, orig_lengths):
