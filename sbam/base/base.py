@@ -1,10 +1,12 @@
 import math
-import pysam
-import numpy as np
 import multiprocessing as mp
 from collections import defaultdict
-from scipy.stats import binomtest
+
+import numpy as np
+import pysam
 from Bio import SeqIO
+from scipy.stats import binomtest
+
 
 def _multi_thread(args):
 
@@ -101,6 +103,27 @@ class BaseAccuracy:
         
         print(f"   - Median Depth: {median_depth:.1f}x")
         print(f"   - Masked {self.masked_bases} bases ({self.masked_pct:.2f}%) due to structural noise/discordance.")
+
+        intervals = []
+        # Fast numpy edge detection to find start/end of true blocks
+        edges = np.diff(np.concatenate(([0], mask_arr.view(np.int8), [0])))
+        starts = np.where(edges == 1)[0]
+        ends = np.where(edges == -1)[0]
+        
+        for s, e in zip(starts, ends):
+            if e - s >= 50:  # Filter out noisy drops (keep blocks >50bp)
+                mean_depth = np.mean(depth_arr[s:e])
+                if mean_depth > upper_depth: 
+                    reason = "High Depth (Collapsed Repeat / Multi-copy Operon)"
+                elif mean_depth < lower_depth: 
+                    reason = "Low Depth (Gap / Poor Coverage)"
+                else: 
+                    reason = "Low Concordance (Severe Basecalling Discordance)"
+                
+                intervals.append({"start": int(s), "end": int(e), "length": int(e-s), "reason": reason})
+                
+        intervals.sort(key=lambda x: x['length'], reverse=True)
+        self.masked_regions = intervals[:50]  # Store top 50 largest regions
         
         return concord_arr, mask_arr
 
