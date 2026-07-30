@@ -34,4 +34,3 @@ def test_motif_analysis_logic(mock_bam, mock_seqio):
     # Patch the class method directly for this test
     with patch.object(engine, 'build_fidelity_profile', return_value=(concord_arr, mask_arr)):
         results = engine.analyze_motifs()
-        pass 
