@@ -20,7 +20,7 @@ def test_calculate_symmetry_viable(mock_seqio):
     results = engine.calculate_symmetry(window_size=1000)
     
     assert "contig_1" in results
-    assert results["contig_1"]["viability"] == "VIABLE"
+    assert results["contig_1"]["viability"] == "ACCEPTABLE"
     assert 170 <= results["contig_1"]["symmetry"] <= 180
 
 @patch('sbam.struct.ori.SeqIO.parse')

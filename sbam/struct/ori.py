@@ -1,6 +1,7 @@
 import numpy as np
 from Bio import SeqIO
 
+
 class BioVal:
     def __init__(self, fasta_path):
         self.fasta_path = fasta_path
@@ -57,11 +58,11 @@ class BioVal:
             # Evaluate biological viability
             # If symmetry is between 165 and 180 degrees, it's highly viable.
             if 165 <= symmetry_degrees <= 180:
-                viability = "VIABLE"
+                viability = "ACCEPTABLE"
             elif 150 <= symmetry_degrees < 165:
-                viability = "WARNING"
+                viability = "ATYPICAL"
             else:
-                viability = "SKEWED"
+                viability = "WARNING"
                 
             self.results[record.id] = {
                 "length": seq_len,

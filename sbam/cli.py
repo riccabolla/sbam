@@ -1,5 +1,4 @@
 import argparse
-import sys
 import os
 
 def parse_args():
@@ -39,12 +38,12 @@ def main():
 # Structural validation step
     print("Structural Validation")
 
-    from sbam.struct.struct import GenomeArchitecture 
-    from sbam.struct.mapping import ReadAligner
     from sbam.struct.eval import JunctionEvaluator
+    from sbam.struct.mapping import ReadAligner
+    from sbam.struct.struct import GenomeStructure
     
     # Initialize the architecture class
-    genome = GenomeArchitecture(args.assembly, args.outdir)
+    genome = GenomeStructure(args.assembly, args.outdir)
     print(f" > Found {len(genome.records)} contig(s).")
     
     # Create the cyclic buffer
@@ -117,13 +116,15 @@ def main():
     builder = DashboardBuilder(args.outdir, args.assembly)
     masked_pct = fidelity.masked_pct if hasattr(fidelity, 'masked_pct') else 0
     masked_bases = fidelity.masked_bases if hasattr(fidelity, 'masked_bases') else 0
+    masked_regions = fidelity.masked_regions if hasattr(fidelity, 'masked_regions') else []
     
     report_file = builder.generate_report(
         junction_metrics=junction_metrics,
         physics_metrics=physics_metrics,
         motif_results=motif_results,
         masked_bases=masked_bases, 
-        masked_pct=masked_pct
+        masked_pct=masked_pct,
+        masked_regions=masked_regions
     )
     
     print(f"\n[DONE] SBAM execution finished successfully.")
