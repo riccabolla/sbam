@@ -1,8 +1,10 @@
 import os
+
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
 
-class GenomeArchitecture:
+
+class GenomeStructure:
     def __init__(self, fasta_path, outdir):
         self.fasta_path = fasta_path
         self.outdir = outdir
