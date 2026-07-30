@@ -8,7 +8,7 @@ SBAM is quality control pipeline for long-read microbial genome assemblies.
 
 It maps the original sequencing reads back to the assembly to empirically prove structural circularity, validate biological replication architecture, and detect systematic sequence motif errors. 
 
-You can find all the details in the *[wiki]()*.
+You can find all the details in the *[wiki](https://sbam.readthedocs.io/en/latest/)*.
 
 ## Installation
 
@@ -35,7 +35,7 @@ sbam -h
 ### Source
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/sbam.git
+git clone https://github.com/riccabolla/sbam.git
 cd sbam
 
 # Create environment
