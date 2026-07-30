@@ -1,1 +1,1 @@
-# sbam: Structural and base-level analysis of ONT microbial assemblies
+# sbam: Structural and base-level analysis of microbial assemblies
