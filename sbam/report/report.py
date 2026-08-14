@@ -362,8 +362,10 @@ class DashboardBuilder:
                 if c_j_stat == "PASS":
                     if c_p_stat in ["ACCEPTABLE"]:
                         evaluation = "Reliable Circular Graph"
-                    elif c_p_stat in ["ATYPICAL", "WARNING"]:
-                        evaluation = "Structurally Intact, Atypical Architecture"
+                    elif c_p_stat in ["ATYPICAL"]:
+                        evaluation = "Structurally Intact, Atypical replication structure"
+                    elif c_p_stat in ["WARNING"]:
+                        evaluation = "Structurally Intact, Unreliable replication structure"
                     else:
                         evaluation = "Structurally Intact"
                 else:
