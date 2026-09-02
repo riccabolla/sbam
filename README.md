@@ -76,6 +76,10 @@ sbam \
 
 Number of CPU threads to use. (Default: 4)
 
+-g, --genome_size
+
+Expected genome size (default: None)
+
 --buffer-size BUFFER_SIZE
 
 Size of the cyclic buffer edge (bp) for mapping (default: 50000)
