@@ -1,6 +1,7 @@
 import os
 import json
 from datetime import datetime
+from turtle import reset
 from jinja2 import Template
 
 HTML_TEMPLATE = """
@@ -103,6 +104,18 @@ HTML_TEMPLATE = """
                 <div class="value">{{ motif_count }} Systematic Error(s)</div>
                 <div class="desc">Bypasses FASTQ Q-scores by calculating empirical read-to-assembly concordance. Flags specific motifs failed by polishers.</div>
             </div>
+            {% if has_genome_size %}
+            <div class="card" style="border-left-color: {% if completeness_status == 'PASS' %}#2ecc71{% elif completeness_status == 'WARNING' %}#f1c40f{% else %}#e74c3c{% endif %};">
+                <h3>
+                    4. Genome Completeness
+                    <div class="tooltip">?
+                        <span class="tooltiptext" style="width: 250px; margin-left: -125px;">Thresholds based on standard pan-genome accessory genome (15%) and CheckM high-quality completeness definitions (90%).</span>
+                    </div>
+                </h3>
+                <div class="value">{{ "%.1f"|format(total_length_mb) }} Mb ({{ "%.1f"|format(completeness_pct) }}%)</div>
+                <div class="desc">{{ completeness_msg }}</div>
+            </div>
+            {% endif %}
         </div>
 
         <h2>
@@ -324,7 +337,7 @@ class DashboardBuilder:
         self.outdir = outdir
         self.assembly_name = os.path.basename(assembly_path)
         
-    def generate_report(self, junction_metrics, physics_metrics, motif_results, masked_bases, masked_pct, masked_regions=None):
+    def generate_report(self, junction_metrics, physics_metrics, motif_results, masked_bases, masked_pct, masked_regions=None, genome_size=None):
         print(" > [Report] Compiling HTML dashboard...")
         
         # identify chromosome
@@ -347,6 +360,33 @@ class DashboardBuilder:
             
         motif_count = len(motif_results) if motif_results else 0
         evaluated_pct = 100.0 - masked_pct
+
+        has_genome_size = genome_size is not None
+        total_length = sum(m['length'] for m in junction_metrics.values()) if junction_metrics else 0
+        primary_length = junction_metrics[primary_contig_id]['length'] if primary_contig_id and primary_contig_id in junction_metrics else 0
+        
+        total_length_mb = total_length / 1000000
+        genome_size_mb = (genome_size / 1000000) if has_genome_size else 0
+        completeness_pct = (total_length / genome_size * 100) if has_genome_size and genome_size > 0 else 0
+        primary_pct = (primary_length / genome_size * 100) if has_genome_size and genome_size > 0 else 0
+        
+        completeness_status = "UNKNOWN"
+        completeness_msg = ""
+        
+        if has_genome_size:
+            if completeness_pct < 90.0:
+                completeness_status = "FAIL"
+                completeness_msg = f"Assembly is missing >10% of genome sequence. Total size is {total_length_mb:.1f} Mb vs genome {genome_size_mb:.1f} Mb."
+            elif completeness_pct > 110.0:
+                completeness_status = "WARNING"
+                completeness_msg = "Assembly is >10% larger than genome. Indicates possible uncollapsed haplotypes or contamination."
+            elif primary_pct < 85.0:
+                completeness_status = "WARNING"
+                completeness_msg = f"Total size is good, but primary contig is only {primary_pct:.1f}% of genome. Chromosome is likely fragmented."
+            else:
+                completeness_status = "PASS"
+                completeness_msg = "Total genome size and primary chromosome length match biological expectations."
+        
         
         # Contig summary
         num_contigs = len(junction_metrics) if junction_metrics else 0
@@ -355,7 +395,13 @@ class DashboardBuilder:
             for cid, j_metrics in junction_metrics.items():
                 length_kb = j_metrics['length'] / 1000
                 c_j_stat = j_metrics['status']
-                c_type = j_metrics.get('classification', 'Unknown')
+                
+                # Dynamic classification based on genome size (if provided)
+                if has_genome_size:
+                    c_type = "Chromosome" if (j_metrics['length'] / genome_size) >= 0.85 else "Plasmid/Fragment"
+                else:
+                    c_type = "Chromosome" if j_metrics['length'] >= 1000000 else "Plasmid/Fragment"
+                    
                 c_p_stat = physics_metrics.get(cid, {}).get('viability', 'N/A')
                 
                 # Refined dynamic evaluation leveraging the new classification
@@ -394,7 +440,7 @@ class DashboardBuilder:
             if p_status in ["ACCEPTABLE"]:
                 #result = "ACCEPT"
                 result_color = "#27ae60"
-                result_msg = "Strong evidence of structural circularity and expected biological replication architecture. " \
+                result_msg = "Strong evidence of structural circularity and genome biological replication architecture. " \
                 "High confidence in chromosomal integrity."
             elif p_status in ["ATYPICAL", "WARNING"]:
                 #result = "REVIEW"
@@ -406,6 +452,21 @@ class DashboardBuilder:
                 result_color = "#f39c12"
                 result_msg = "Structurally intact, but chromosomal size is too small to perform replication analysis. " \
                 "Likely a plasmid assembly."
+        if has_genome_size:
+            if completeness_status == "FAIL":
+                result = "FAIL (INCOMPLETE)"
+                result_color = "#c0392b"
+                result_msg += f" The assembly is critically incomplete ({completeness_pct:.1f}% of genome)."
+            elif completeness_status == "WARNING":
+                if result == "ACCEPT":
+                    result = "REVIEW (SIZE ANOMALY)"
+                    result_color = "#f39c12"
+                
+                # Check explicitly for fragmentation vs total size anomaly
+                if primary_pct < 85.0 and 90.0 <= completeness_pct <= 110.0:
+                    result_msg += f" WARNING: The chromosome is highly fragmented ({primary_pct:.1f}% of genome size)." 
+                else:
+                    result_msg += f" WARNING: The total assembly size is out of standard range ({completeness_pct:.1f}% of genome)."         
 
         template = Template(HTML_TEMPLATE)
         html_content = template.render(
@@ -427,7 +488,12 @@ class DashboardBuilder:
             masked_bases=masked_bases,
             masked_pct=masked_pct,
             evaluated_pct=evaluated_pct,
-            masked_regions=masked_regions
+            masked_regions=masked_regions,
+            has_genome_size=has_genome_size,
+            total_length_mb=total_length_mb,
+            completeness_pct=completeness_pct,
+            completeness_status=completeness_status,
+            completeness_msg=completeness_msg
         )
         
         report_path = os.path.join(self.outdir, f"{self.assembly_name}_sbam_report.html")
