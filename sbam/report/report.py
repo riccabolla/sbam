@@ -1,6 +1,7 @@
 import os
 import json
 from datetime import datetime
+from turtle import reset
 from jinja2 import Template
 
 HTML_TEMPLATE = """
@@ -11,13 +12,16 @@ HTML_TEMPLATE = """
     <title>SBAM Assembly Report</title>
     <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f4f9; color: #333; margin: 0; padding: 20px; line-height: 1.5; }
-        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+        background: #f4f4f9; color: #333; margin: 0; padding: 20px; line-height: 1.5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 30px; 
+        border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         h1 { border-bottom: 2px solid #2c3e50; padding-bottom: 10px; color: #2c3e50; margin-bottom: 5px; }
         h2 { color: #34495e; margin-top: 40px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
         .subtitle { color: #7f8c8d; font-size: 14px; margin-bottom: 30px; }
         
-        .executive-summary { background: {{ result_color }}22; border: 2px solid {{ result_color }}; padding: 20px; border-radius: 8px; margin-bottom: 30px; }
+        .executive-summary { background: {{ result_color }}22; border: 2px solid {{ result_color }}; 
+        padding: 20px; border-radius: 8px; margin-bottom: 30px; }
         .executive-summary h2 { margin: 0 0 10px 0; color: {{ result_color }}; border: none; padding: 0; }
         .executive-summary p { margin: 0; font-size: 16px; font-weight: 500; color: #2c3e50; }
         
@@ -31,9 +35,12 @@ HTML_TEMPLATE = """
         th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
         th { background-color: #f8f9fa; color: #2c3e50; }
         
-        .badge-pass, .badge-acceptable { background: #2ecc71; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; }
-        .badge-fail, .badge-warning { background: #e74c3c; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; }
-        .badge-warn, .badge-atypical, .badge-no_data { background: #f1c40f; color: black; padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; }
+        .badge-pass, .badge-acceptable { background: #2ecc71; color: white; padding: 4px 8px; border-radius: 12px; 
+        font-size: 12px; font-weight: bold; }
+        .badge-fail, .badge-atypical { background: #e74c3c; color: white; padding: 4px 8px; border-radius: 12px; 
+        font-size: 12px; font-weight: bold; }
+        .badge-warn, .badge-warning, .badge-no_data { background: #f1c40f; color: black; padding: 4px 8px; 
+        border-radius: 12px; font-size: 12px; font-weight: bold; }
         
         .plot-container { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 10px; margin-top: 20px; }
 
@@ -71,7 +78,7 @@ HTML_TEMPLATE = """
                 {% for c in contig_summaries %}
                 <tr>
                     <td><strong>{{ c.id }}</strong></td>
-                    <td>{{ c.type }}</td>
+                    <td><span style="color: #2980b9; font-weight: 600;">{{ c.type }}</span></td>
                     <td>{{ "%.1f"|format(c.length_kb) }} kb</td>
                     <td><span class="badge-{{ c.j_stat|lower }}">{{ c.j_stat }}</span></td>
                     <td style="color: #555; font-weight: 500;">{{ c.evaluation }}</td>
@@ -97,23 +104,35 @@ HTML_TEMPLATE = """
                 <div class="value">{{ motif_count }} Systematic Error(s)</div>
                 <div class="desc">Bypasses FASTQ Q-scores by calculating empirical read-to-assembly concordance. Flags specific motifs failed by polishers.</div>
             </div>
+            {% if has_genome_size %}
+            <div class="card" style="border-left-color: {% if completeness_status == 'PASS' %}#2ecc71{% elif completeness_status == 'WARNING' %}#f1c40f{% else %}#e74c3c{% endif %};">
+                <h3>
+                    4. Genome Completeness
+                    <div class="tooltip">?
+                        <span class="tooltiptext" style="width: 250px; margin-left: -125px;">Thresholds based on standard pan-genome accessory genome (15%) and CheckM high-quality completeness definitions (90%).</span>
+                    </div>
+                </h3>
+                <div class="value">{{ "%.1f"|format(total_length_mb) }} Mb ({{ "%.1f"|format(completeness_pct) }}%)</div>
+                <div class="desc">{{ completeness_msg }}</div>
+            </div>
+            {% endif %}
         </div>
 
         <h2>
             Circularity
             <div class="tooltip">?
-                <span class="tooltiptext"><strong>Why this matters:</strong> Calculates the ratio of reads that continuously span an artificial assembly junction versus reads that clip/break at that exact coordinate. A score near 0.0 indicates a linear fragment or misassembly, as no physical DNA molecule exists to bridge the gap.</span>
+                <span class="tooltiptext"> Calculates the ratio of reads that continuously span an artificial assembly junction versus reads that clip/break at that exact coordinate. A score near 0.0 indicates a linear fragment or misassembly, as no reads bridge the gap.</span>
             </div>
             <a href="https://sbam.readthedocs.io/en/latest/Circularity/" target="_blank" class="docs-link">Read Methodology &rarr;</a>
         </h2>
         
         <table>
-            <tr><th>Contig</th><th>Length (kb)</th><th>Avg Depth</th><th>Spanning / Broken</th><th>Junction Score</th><th>Status</th></tr>
+            <tr><th>Contig</th><th>Length (kb)</th><th>Depth (Copy Num)</th><th>Spanning / Broken</th><th>Junction Score</th><th>Status</th></tr>
             {% for contig, metrics in junction.items() %}
             <tr>
                 <td>{{ contig }}</td>
                 <td>{{ "%.1f"|format(metrics.length / 1000) }}</td>
-                <td>{{ metrics.avg_depth }}x</td>
+                <td>{{ metrics.avg_depth }}x <strong>({{ "%.1f"|format(metrics.copy_number) }}c)</strong></td>
                 <td>{{ metrics.spanning_reads }} / {{ metrics.broken_reads }}</td>
                 <td>{{ "%.2f"|format(metrics.spanning_score) }}</td>
                 <td><span class="badge-{{ metrics.status|lower }}">{{ metrics.status }}</span></td>
@@ -124,7 +143,7 @@ HTML_TEMPLATE = """
         <h2>
             Replication structure
             <div class="tooltip">?
-                <span class="tooltiptext"><strong>Why this matters:</strong> True bacterial chromosomes replicate bidirectionally, generating a highly symmetrical GC Skew signature pointing to the <i>oriC</i> and <i>ter</i>. SBAM flags contigs that lack this symmetry, highlighting potential misassemblies, chimeras, or unresolvable repeats that standard QC tools miss.</span>
+                <span class="tooltiptext"> Bacterial chromosomes replicate bidirectionally, generating a highly symmetrical GC Skew signature pointing to the <i>oriC</i> and <i>ter</i>. SBAM flags contigs that lack this symmetry, highlighting potential misassemblies, chimeras, or unresolvable repeats.</span>
             </div>
             <a href="https://sbam.readthedocs.io/en/latest/Replication-structure/" target="_blank" class="docs-link">Read Methodology &rarr;</a>
         </h2>
@@ -151,7 +170,7 @@ HTML_TEMPLATE = """
             <h3 style="text-align: center; color: #2c3e50; margin-bottom: 5px;">Genome Architecture Map: Contig {{ contig }}</h3>
             <div id="plot_{{ contig }}" style="width:100%; max-width:800px; height:600px; margin:0 auto;"></div>
 
-                       <div style="text-align: center; margin-top: 10px; margin-bottom: 20px; font-size: 13px; color: #7f8c8d; display: flex; justify-content: center; gap: 20px; flex-wrap: wrap;">
+            <div style="text-align: center; margin-top: 10px; margin-bottom: 20px; font-size: 13px; color: #7f8c8d; display: flex; justify-content: center; gap: 20px; flex-wrap: wrap;">
                 <div style="display: flex; align-items: center;">
                     <span style="display: inline-block; width: 20px; height: 6px; background-color: #bdc3c7; margin-right: 8px; border-radius: 3px;"></span>
                     Genome Track
@@ -163,7 +182,7 @@ HTML_TEMPLATE = """
                     <span style="display: inline-block; width: 20px; height: 6px; background-color: #3498db; margin-right: 8px; border-radius: 3px; opacity: 0.7;"></span>
                     GC Skew
                     <div class="tooltip">?
-                        <span class="tooltiptext">Tracks the cumulative Guanine vs. Cytosine bias. In a true chromosome, bidirectional replication causes the leading strand to enrich with Guanine, creating a distinctive smooth wave.</span>
+                        <span class="tooltiptext">Tracks the cumulative GC bias. Bidirectional replication causes the leading strand to enrich with Guanine, creating a distinctive smooth wave.</span>
                     </div>
                 </div>
                 <div style="display: flex; align-items: center;">
@@ -251,7 +270,7 @@ HTML_TEMPLATE = """
         <h2 style="margin-top: 50px;">
             Base-Level Analysis
             <div class="tooltip">?
-                <span class="tooltiptext"><strong>The Limitation of Q-Scores:</strong> Consensus Q-scores generated by polishers are algorithmic heuristics, not physical measurements. SBAM maps the original physical sequencing reads back to the FASTA to empirically measure true sequence concordance and flag systematic motif dropouts caused by basecaller errors.</span>
+                <span class="tooltiptext"> SBAM maps the original physical sequencing reads back to the FASTA to empirically measure true sequence concordance and flag systematic motif dropouts caused by basecaller errors.</span>
             </div>
             <a href="https://sbam.readthedocs.io/en/latest/Base-Level-Analysis/" target="_blank" class="docs-link">Read Methodology &rarr;</a>
         </h2>
@@ -318,7 +337,7 @@ class DashboardBuilder:
         self.outdir = outdir
         self.assembly_name = os.path.basename(assembly_path)
         
-    def generate_report(self, junction_metrics, physics_metrics, motif_results, masked_bases, masked_pct, masked_regions=None):
+    def generate_report(self, junction_metrics, physics_metrics, motif_results, masked_bases, masked_pct, masked_regions=None, genome_size=None):
         print(" > [Report] Compiling HTML dashboard...")
         
         # identify chromosome
@@ -341,6 +360,33 @@ class DashboardBuilder:
             
         motif_count = len(motif_results) if motif_results else 0
         evaluated_pct = 100.0 - masked_pct
+
+        has_genome_size = genome_size is not None
+        total_length = sum(m['length'] for m in junction_metrics.values()) if junction_metrics else 0
+        primary_length = junction_metrics[primary_contig_id]['length'] if primary_contig_id and primary_contig_id in junction_metrics else 0
+        
+        total_length_mb = total_length / 1000000
+        genome_size_mb = (genome_size / 1000000) if has_genome_size else 0
+        completeness_pct = (total_length / genome_size * 100) if has_genome_size and genome_size > 0 else 0
+        primary_pct = (primary_length / genome_size * 100) if has_genome_size and genome_size > 0 else 0
+        
+        completeness_status = "UNKNOWN"
+        completeness_msg = ""
+        
+        if has_genome_size:
+            if completeness_pct < 90.0:
+                completeness_status = "FAIL"
+                completeness_msg = f"Assembly is missing >10% of genome sequence. Total size is {total_length_mb:.1f} Mb vs genome {genome_size_mb:.1f} Mb."
+            elif completeness_pct > 110.0:
+                completeness_status = "WARNING"
+                completeness_msg = "Assembly is >10% larger than genome. Indicates possible uncollapsed haplotypes or contamination."
+            elif primary_pct < 85.0:
+                completeness_status = "WARNING"
+                completeness_msg = f"Total size is good, but primary contig is only {primary_pct:.1f}% of genome. Chromosome is likely fragmented."
+            else:
+                completeness_status = "PASS"
+                completeness_msg = "Total genome size and primary chromosome length match biological expectations."
+        
         
         # Contig summary
         num_contigs = len(junction_metrics) if junction_metrics else 0
@@ -349,20 +395,33 @@ class DashboardBuilder:
             for cid, j_metrics in junction_metrics.items():
                 length_kb = j_metrics['length'] / 1000
                 c_j_stat = j_metrics['status']
-                c_type = "Chromosome" if j_metrics['length'] >= 1000000 else "Plasmid/Fragment"
+                
+                # Dynamic classification based on genome size (if provided)
+                if has_genome_size:
+                    c_type = "Chromosome" if (j_metrics['length'] / genome_size) >= 0.85 else "Plasmid/Fragment"
+                else:
+                    c_type = "Chromosome" if j_metrics['length'] >= 1000000 else "Plasmid/Fragment"
+                    
                 c_p_stat = physics_metrics.get(cid, {}).get('viability', 'N/A')
                 
-                # Dynamic biological evaluation
+                # Refined dynamic evaluation leveraging the new classification
                 if c_j_stat == "PASS":
                     if c_p_stat in ["ACCEPTABLE"]:
-                        evaluation = "Circular"
-                    elif c_p_stat in ["ATYPICAL", "WARNING"]:
+                        evaluation = "Reliable Circular Graph"
+                    elif c_p_stat in ["ATYPICAL"]:
                         evaluation = "Structurally Intact, Atypical replication structure"
+                    elif c_p_stat in ["WARNING"]:
+                        evaluation = "Structurally Intact, Unreliable replication structure"
                     else:
-                        evaluation = "Structurally Intact Plasmid"
+                        evaluation = "Structurally Intact"
                 else:
-                    evaluation = "Linear Fragment or Misassembly"
-                    
+                    if "Misassembled" in c_type:
+                        evaluation = "Contradicted Junction"
+                    elif "Debris" in c_type:
+                        evaluation = "Likely an artifact"
+                    else:
+                        evaluation = "Linear Fragment"
+                        
                 contig_summaries.append({
                     "id": cid,
                     "type": c_type,
@@ -381,7 +440,7 @@ class DashboardBuilder:
             if p_status in ["ACCEPTABLE"]:
                 #result = "ACCEPT"
                 result_color = "#27ae60"
-                result_msg = "Strong evidence of structural circularity and expected biological replication architecture. " \
+                result_msg = "Strong evidence of structural circularity and genome biological replication architecture. " \
                 "High confidence in chromosomal integrity."
             elif p_status in ["ATYPICAL", "WARNING"]:
                 #result = "REVIEW"
@@ -393,6 +452,21 @@ class DashboardBuilder:
                 result_color = "#f39c12"
                 result_msg = "Structurally intact, but chromosomal size is too small to perform replication analysis. " \
                 "Likely a plasmid assembly."
+        if has_genome_size:
+            if completeness_status == "FAIL":
+                result = "FAIL (INCOMPLETE)"
+                result_color = "#c0392b"
+                result_msg += f" The assembly is critically incomplete ({completeness_pct:.1f}% of genome)."
+            elif completeness_status == "WARNING":
+                if result == "ACCEPT":
+                    result = "REVIEW (SIZE ANOMALY)"
+                    result_color = "#f39c12"
+                
+                # Check explicitly for fragmentation vs total size anomaly
+                if primary_pct < 85.0 and 90.0 <= completeness_pct <= 110.0:
+                    result_msg += f" WARNING: The chromosome is highly fragmented ({primary_pct:.1f}% of genome size)." 
+                else:
+                    result_msg += f" WARNING: The total assembly size is out of standard range ({completeness_pct:.1f}% of genome)."         
 
         template = Template(HTML_TEMPLATE)
         html_content = template.render(
@@ -414,7 +488,12 @@ class DashboardBuilder:
             masked_bases=masked_bases,
             masked_pct=masked_pct,
             evaluated_pct=evaluated_pct,
-            masked_regions=masked_regions
+            masked_regions=masked_regions,
+            has_genome_size=has_genome_size,
+            total_length_mb=total_length_mb,
+            completeness_pct=completeness_pct,
+            completeness_status=completeness_status,
+            completeness_msg=completeness_msg
         )
         
         report_path = os.path.join(self.outdir, f"{self.assembly_name}_sbam_report.html")

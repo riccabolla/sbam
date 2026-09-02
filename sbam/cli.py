@@ -1,6 +1,21 @@
 import argparse
 import os
 
+
+def parse_size(size_str):
+    if not size_str: return None
+    size_str = size_str.lower().strip()
+    try:
+        if size_str.endswith(('mb', 'm')):
+            return int(float(size_str.replace('mb', '').replace('m', '')) * 1_000_000)
+        elif size_str.endswith(('kb', 'k')):
+            return int(float(size_str.replace('kb', '').replace('k', '')) * 1_000)
+        else:
+            return int(size_str)
+    except ValueError:
+        raise ValueError(f"Invalid expected size format: {size_str}")
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         prog="sbam",
@@ -19,6 +34,7 @@ def parse_args():
     # Optional parameters
     parser.add_argument("-t", "--threads", type=int, default=4, 
                         help="Number of CPU threads for minimap2")
+    parser.add_argument("-g", "--genome_size", type=str, help="Expected genome size")
     parser.add_argument("--buffer-size", type=int, default=50000, 
                         help="Size of the cyclic buffer edge (bp) for mapping")
     parser.add_argument("--read-type", choices=["map-ont", "map-pb"], default="map-ont", 
@@ -31,7 +47,7 @@ def main():
     
     # Setup output directory
     os.makedirs(args.outdir, exist_ok=True)
-    print(f"[INIT] Starting SBAM analysis...")
+    print("[INIT] Starting SBAM analysis...")
     print(f"[INIT] Assembly: {args.assembly}")
     print(f"[INIT] Output directory: {args.outdir}\n")
   
@@ -117,6 +133,8 @@ def main():
     masked_pct = fidelity.masked_pct if hasattr(fidelity, 'masked_pct') else 0
     masked_bases = fidelity.masked_bases if hasattr(fidelity, 'masked_bases') else 0
     masked_regions = fidelity.masked_regions if hasattr(fidelity, 'masked_regions') else []
+
+    genome_size: None | int = parse_size(args.genome_size) if hasattr(args, "genome_size") else None
     
     report_file = builder.generate_report(
         junction_metrics=junction_metrics,
@@ -124,9 +142,10 @@ def main():
         motif_results=motif_results,
         masked_bases=masked_bases, 
         masked_pct=masked_pct,
-        masked_regions=masked_regions
+        masked_regions=masked_regions,
+        genome_size=genome_size # type: ignore
     )
     
-    print(f"\n[DONE] SBAM execution finished successfully.")
-    print(f"       View your report at: {report_file}")
+    print("\n[DONE] SBAM execution finished successfully.")
+    print(f"View your report at: {report_file}")
     return 0
