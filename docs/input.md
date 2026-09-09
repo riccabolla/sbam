@@ -81,3 +81,7 @@ It is important that the buffer size is larger than your longest sequencing read
 SBAM uses threads during two steps: the minimap2 alignment and the base-level motif profiling.
 
 When possible, we recommend to run it with 4 to 8 threads, after that value there is a progressive diminishing returns.
+
+![Figure 1. Threads usage](figure/thread_scalability.png)
+
+*Figure 1. CPUs usage
