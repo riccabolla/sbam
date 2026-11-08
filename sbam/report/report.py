@@ -1,7 +1,5 @@
 import os
-import json
 from datetime import datetime
-from turtle import reset
 from jinja2 import Template
 
 HTML_TEMPLATE = """
@@ -160,7 +158,7 @@ HTML_TEMPLATE = """
             </tr>
             {% endfor %}
             {% if not physics %}
-            <tr><td colspan="5" style="text-align: center;">No contigs >300kb available for replication architecture analysis.</td></tr>
+            <tr><td colspan="5" style="text-align: center;">No contigs &gt;100kb available for replication architecture analysis.</td></tr>
             {% endif %}
         </table>
 
@@ -188,7 +186,7 @@ HTML_TEMPLATE = """
                 <div style="display: flex; align-items: center;">
                     <span style="display: inline-block; width: 10px; height: 10px; background-color: #2ecc71; border-radius: 50%; margin-right: 4px;"></span>
                     <span style="display: inline-block; width: 10px; height: 10px; background-color: #e74c3c; border-radius: 50%; margin-right: 8px;"></span>
-                    Key Loci (oriC & ter)
+                    Key Loci (oriC &amp; ter)
                     <div class="tooltip">?
                         <span class="tooltiptext">The predicted Origin of Replication and Terminus. On a perfectly assembled chromosome, these should be physically opposite each other (~180° apart).</span>
                     </div>
@@ -290,7 +288,7 @@ HTML_TEMPLATE = """
         
         {% if masked_regions %}
         <h3 style="font-size: 14px; color: #34495e; margin-top: 20px;">
-        Largest Excluded Regions ( 50 bp)
+        Largest Excluded Regions (&ge; 50 bp)
         <div class="tooltip">?
             <span class="tooltiptext">
             <strong>High Depth:</strong> Indicates unresolved collapsed repeats<br>
@@ -324,7 +322,7 @@ HTML_TEMPLATE = """
             </tr>
             {% endfor %}
             {% if not motifs %}
-            <tr><td colspan="5" style="text-align: center; color: #27ae60; font-weight: bold; padding: 20px;">No systematic motif errors detected in evaluated regions. Basecalling is highly concordant!</td></tr>
+            <tr><td colspan="5" style="text-align: center; color: #2760; font-weight: bold; padding: 20px;">No systematic motif errors detected in evaluated regions. Basecalling is highly concordant!</td></tr>
             {% endif %}
         </table>
     </div>
@@ -332,79 +330,123 @@ HTML_TEMPLATE = """
 </html>
 """
 
+
 class DashboardBuilder:
     def __init__(self, outdir, assembly_path):
         self.outdir = outdir
         self.assembly_name = os.path.basename(assembly_path)
-        
-    def generate_report(self, junction_metrics, physics_metrics, motif_results, masked_bases, masked_pct, masked_regions=None, genome_size=None):
+
+    def generate_report(
+        self,
+        junction_metrics,
+        physics_metrics,
+        motif_results,
+        masked_bases,
+        masked_pct,
+        masked_regions=None,
+        genome_size=None,
+    ):
         print(" > [Report] Compiling HTML dashboard...")
-        
-        # identify chromosome
+
+        # Identify primary chromosome
         primary_contig_id = None
         if junction_metrics:
-            primary_contig_id = max(junction_metrics.keys(), key=lambda k: junction_metrics[k]['length'])
-        
-        # calculate confidence
+            primary_contig_id = max(
+                junction_metrics.keys(), key=lambda k: junction_metrics[k]["length"]
+            )
+
+        # Calculate confidence metrics
         primary_junc_score = "N/A"
         j_status = "UNKNOWN"
         if primary_contig_id and primary_contig_id in junction_metrics:
-            j_status = junction_metrics[primary_contig_id]['status']
-            primary_junc_score = f"{junction_metrics[primary_contig_id]['spanning_score']:.2f}"
-            
+            j_status = junction_metrics[primary_contig_id]["status"]
+            primary_junc_score = (
+                f"{junction_metrics[primary_contig_id]['spanning_score']:.2f}"
+            )
+
         primary_symmetry = "N/A"
         p_status = "N/A"
         if primary_contig_id and primary_contig_id in physics_metrics:
-            p_status = physics_metrics[primary_contig_id]['viability']
+            p_status = physics_metrics[primary_contig_id]["viability"]
             primary_symmetry = f"{physics_metrics[primary_contig_id]['symmetry']}°"
-            
+
         motif_count = len(motif_results) if motif_results else 0
         evaluated_pct = 100.0 - masked_pct
 
-        has_genome_size = genome_size is not None
-        total_length = sum(m['length'] for m in junction_metrics.values()) if junction_metrics else 0
-        primary_length = junction_metrics[primary_contig_id]['length'] if primary_contig_id and primary_contig_id in junction_metrics else 0
-        
+        has_genome_size = genome_size is not None and genome_size > 0
+        total_length = (
+            sum(m["length"] for m in junction_metrics.values())
+            if junction_metrics
+            else 0
+        )
+        primary_length = (
+            junction_metrics[primary_contig_id]["length"]
+            if primary_contig_id and primary_contig_id in junction_metrics
+            else 0
+        )
+
         total_length_mb = total_length / 1000000
         genome_size_mb = (genome_size / 1000000) if has_genome_size else 0
-        completeness_pct = (total_length / genome_size * 100) if has_genome_size and genome_size > 0 else 0
-        primary_pct = (primary_length / genome_size * 100) if has_genome_size and genome_size > 0 else 0
-        
+        completeness_pct = (
+            (total_length / genome_size * 100) if has_genome_size else 0.0
+        )
+        primary_pct = (
+            (primary_length / genome_size * 100) if has_genome_size else 0.0
+        )
+
         completeness_status = "UNKNOWN"
         completeness_msg = ""
-        
+
         if has_genome_size:
             if completeness_pct < 90.0:
                 completeness_status = "FAIL"
-                completeness_msg = f"Assembly is missing >10% of genome sequence. Total size is {total_length_mb:.1f} Mb vs genome {genome_size_mb:.1f} Mb."
+                completeness_msg = (
+                    f"Assembly is missing >10% of genome sequence. "
+                    f"Total size is {total_length_mb:.1f} Mb vs genome {genome_size_mb:.1f} Mb."
+                )
             elif completeness_pct > 110.0:
                 completeness_status = "WARNING"
-                completeness_msg = "Assembly is >10% larger than genome. Indicates possible uncollapsed haplotypes or contamination."
+                completeness_msg = (
+                    "Assembly is >10% larger than genome. "
+                    "Indicates possible uncollapsed haplotypes or contamination."
+                )
             elif primary_pct < 85.0:
                 completeness_status = "WARNING"
-                completeness_msg = f"Total size is good, but primary contig is only {primary_pct:.1f}% of genome. Chromosome is likely fragmented."
+                completeness_msg = (
+                    f"Total size is good, but primary contig is only {primary_pct:.1f}% "
+                    f"of genome. Chromosome is likely fragmented."
+                )
             else:
                 completeness_status = "PASS"
-                completeness_msg = "Total genome size and primary chromosome length match biological expectations."
-        
-        
+                completeness_msg = (
+                    "Total genome size and primary chromosome length match biological expectations."
+                )
+
         # Contig summary
         num_contigs = len(junction_metrics) if junction_metrics else 0
         contig_summaries = []
         if junction_metrics:
             for cid, j_metrics in junction_metrics.items():
-                length_kb = j_metrics['length'] / 1000
-                c_j_stat = j_metrics['status']
-                
+                length_kb = j_metrics["length"] / 1000
+                c_j_stat = j_metrics["status"]
+                raw_class = j_metrics.get("classification", "")
+
                 # Dynamic classification based on genome size (if provided)
                 if has_genome_size:
-                    c_type = "Chromosome" if (j_metrics['length'] / genome_size) >= 0.85 else "Plasmid/Fragment"
+                    is_chr = (j_metrics["length"] / genome_size) >= 0.85
                 else:
-                    c_type = "Chromosome" if j_metrics['length'] >= 1000000 else "Plasmid/Fragment"
-                    
-                c_p_stat = physics_metrics.get(cid, {}).get('viability', 'N/A')
-                
-                # Refined dynamic evaluation leveraging the new classification
+                    is_chr = j_metrics["length"] >= 1000000
+
+                if is_chr:
+                    c_type = "Chromosome"
+                elif raw_class and raw_class != "Primary Chromosome":
+                    c_type = raw_class
+                else:
+                    c_type = "Plasmid/Fragment"
+
+                c_p_stat = physics_metrics.get(cid, {}).get("viability", "N/A")
+
+                # Refined dynamic evaluation leveraging the junction classification
                 if c_j_stat == "PASS":
                     if c_p_stat in ["ACCEPTABLE"]:
                         evaluation = "Reliable Circular Graph"
@@ -415,64 +457,81 @@ class DashboardBuilder:
                     else:
                         evaluation = "Structurally Intact"
                 else:
-                    if "Misassembled" in c_type:
+                    if "Misassembled" in raw_class or "Misassembled" in c_type:
                         evaluation = "Contradicted Junction"
-                    elif "Debris" in c_type:
+                    elif "Debris" in raw_class or "Debris" in c_type:
                         evaluation = "Likely an artifact"
                     else:
                         evaluation = "Linear Fragment"
-                        
-                contig_summaries.append({
-                    "id": cid,
-                    "type": c_type,
-                    "length_kb": length_kb,
-                    "j_stat": c_j_stat,
-                    "evaluation": evaluation
-                })
-        
-        # output result
-        #result = "FAIL"
+
+                contig_summaries.append(
+                    {
+                        "id": cid,
+                        "type": c_type,
+                        "length_kb": length_kb,
+                        "j_stat": c_j_stat,
+                        "evaluation": evaluation,
+                    }
+                )
+
+        # Output verdict
+        result = "FAIL"
         result_color = "#c0392b"
-        result_msg = "Assembly fails primary structural spanning thresholds. High probability of misassembly, " \
-        "linear fragmentation, or unresolved repeats at contig boundaries."
-        
+        result_msg = (
+            "Assembly fails primary structural spanning thresholds. High probability of misassembly, "
+            "linear fragmentation, or unresolved repeats at contig boundaries."
+        )
+
         if j_status == "PASS":
             if p_status in ["ACCEPTABLE"]:
-                #result = "ACCEPT"
+                result = "ACCEPT"
                 result_color = "#27ae60"
-                result_msg = "Strong evidence of structural circularity and genome biological replication architecture. " \
-                "High confidence in chromosomal integrity."
+                result_msg = (
+                    "Strong evidence of structural circularity and genome biological replication architecture. "
+                    "High confidence in chromosomal integrity."
+                )
             elif p_status in ["ATYPICAL", "WARNING"]:
-                #result = "REVIEW"
+                result = "REVIEW"
                 result_color = "#f39c12"
-                result_msg = "Structurally intact, but the replication architecture deviates significantly from standard bidirectional " \
-                "theta-replication. May indicate a chimera, major inversion, or highly atypical biology."
+                result_msg = (
+                    "Structurally intact, but the replication architecture deviates significantly from standard bidirectional "
+                    "theta-replication. May indicate a chimera, major inversion, or highly atypical biology."
+                )
             else:
-                #result = "ACCEPT WITH CAUTION"
+                result = "ACCEPT WITH CAUTION"
                 result_color = "#f39c12"
-                result_msg = "Structurally intact, but chromosomal size is too small to perform replication analysis. " \
-                "Likely a plasmid assembly."
+                result_msg = (
+                    "Structurally intact, but chromosomal size is too small to perform replication analysis. "
+                    "Likely a plasmid assembly."
+                )
+
         if has_genome_size:
             if completeness_status == "FAIL":
                 result = "FAIL (INCOMPLETE)"
                 result_color = "#c0392b"
-                result_msg += f" The assembly is critically incomplete ({completeness_pct:.1f}% of genome)."
+                result_msg += (
+                    f" The assembly is critically incomplete ({completeness_pct:.1f}% of genome)."
+                )
             elif completeness_status == "WARNING":
                 if result == "ACCEPT":
                     result = "REVIEW (SIZE ANOMALY)"
                     result_color = "#f39c12"
-                
+
                 # Check explicitly for fragmentation vs total size anomaly
                 if primary_pct < 85.0 and 90.0 <= completeness_pct <= 110.0:
-                    result_msg += f" WARNING: The chromosome is highly fragmented ({primary_pct:.1f}% of genome size)." 
+                    result_msg += (
+                        f" WARNING: The chromosome is highly fragmented ({primary_pct:.1f}% of genome size)."
+                    )
                 else:
-                    result_msg += f" WARNING: The total assembly size is out of standard range ({completeness_pct:.1f}% of genome)."         
+                    result_msg += (
+                        f" WARNING: The total assembly size is out of standard range ({completeness_pct:.1f}% of genome)."
+                    )
 
         template = Template(HTML_TEMPLATE)
         html_content = template.render(
             assembly_name=self.assembly_name,
             date=datetime.now().strftime("%Y-%m-%d %H:%M"),
-            #result=result,
+            result=result,
             result_color=result_color,
             result_msg=result_msg,
             num_contigs=num_contigs,
@@ -493,12 +552,12 @@ class DashboardBuilder:
             total_length_mb=total_length_mb,
             completeness_pct=completeness_pct,
             completeness_status=completeness_status,
-            completeness_msg=completeness_msg
+            completeness_msg=completeness_msg,
         )
-        
+
         report_path = os.path.join(self.outdir, f"{self.assembly_name}_sbam_report.html")
         with open(report_path, "w") as f:
             f.write(html_content)
-            
+
         print(f" > [Report] Dashboard saved to: {report_path}")
         return report_path
