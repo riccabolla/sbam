@@ -29,8 +29,8 @@ def _multi_thread(args):
 
             ref_base = ref_seq_chunk[local_idx]
 
-            # add_indels=True ensures insertions (e.g. 'A+2TT'), deletions ('A-1G', '*'),
-            # and substitutions all fail the exact single-base equality check against ref_base.
+            # add_indels=True ensures insertions, deletions, and substitutions
+            # all register as discordant against ref_base.
             query_bases = pileupcolumn.get_query_sequences(add_indels=True)
             actual_depth = len(query_bases) if query_bases else depth
             depths[local_idx] = actual_depth
@@ -50,6 +50,7 @@ class BaseAccuracy:
         k_list=None,
         min_concordance=0.75,
         depth_variance_limit=2.5,
+        merge_gap_bp=500,
     ):
         self.bam_path = bam_path
         self.fasta_path = fasta_path
@@ -57,6 +58,7 @@ class BaseAccuracy:
         self.k_list = k_list if k_list else [4, 5, 6]
         self.min_concordance = min_concordance
         self.depth_variance_limit = depth_variance_limit
+        self.merge_gap_bp = merge_gap_bp
 
         self.primary_contig = max(
             SeqIO.parse(self.fasta_path, "fasta"), key=lambda r: len(r.seq)
@@ -72,10 +74,6 @@ class BaseAccuracy:
         self.masked_regions = []
 
     def _get_buffer_length(self):
-        """
-        Detects the length of the cyclic buffer appended in the BAM reference.
-        Falls back to 0 if the BAM lacks a cyclic tail or is mocked in tests.
-        """
         try:
             with pysam.AlignmentFile(self.bam_path, "rb") as bam:
                 if self.bam_contig_id in bam.references:
@@ -88,8 +86,9 @@ class BaseAccuracy:
 
     def build_fidelity_profile(self):
         """
-        Chunks the genome (including any cyclic buffer) and delegates pileup to
-        multiprocessing workers, then folds buffer coverage back into [0, buffer_len).
+        Chunks the genome (including any cyclic buffer), delegates pileup to
+        workers, folds buffer coverage back into [0, buffer_len), and merges
+        nearby masked intervals (<500 bp apart).
         """
         print(
             f" > [Fidelity] Profiling base concordance for {self.original_contig_id} "
@@ -113,28 +112,33 @@ class BaseAccuracy:
         raw_depth_arr = np.zeros(total_profile_len, dtype=int)
         raw_match_arr = np.zeros(total_profile_len, dtype=int)
 
-        # Execute parallel workers
         with mp.Pool(processes=self.threads) as pool:
             results = pool.map(_multi_thread, tasks)
 
-        # Reassemble raw arrays
         for start, end, d_chunk, m_chunk in results:
             raw_depth_arr[start:end] = d_chunk
             raw_match_arr[start:end] = m_chunk
 
         # Fold cyclic buffer depths and matches back into the start of the contig
-        depth_arr = raw_depth_arr[:self.seq_len].copy()
-        match_arr = raw_match_arr[:self.seq_len].copy()
+        depth_arr = raw_depth_arr[: self.seq_len].copy()
+        match_arr = raw_match_arr[: self.seq_len].copy()
         if buffer_len > 0:
-            depth_arr[:buffer_len] += raw_depth_arr[self.seq_len : self.seq_len + buffer_len]
-            match_arr[:buffer_len] += raw_match_arr[self.seq_len : self.seq_len + buffer_len]
+            depth_arr[:buffer_len] += raw_depth_arr[
+                self.seq_len : self.seq_len + buffer_len
+            ]
+            match_arr[:buffer_len] += raw_match_arr[
+                self.seq_len : self.seq_len + buffer_len
+            ]
 
         concord_arr = np.ones(self.seq_len, dtype=float)
         valid_mask = depth_arr > 0
         concord_arr[valid_mask] = match_arr[valid_mask] / depth_arr[valid_mask]
+        concord_arr[~valid_mask] = 0.0
 
         non_zero_depths = depth_arr[valid_mask]
-        median_depth = np.median(non_zero_depths) if non_zero_depths.size > 0 else 1.0
+        median_depth = (
+            float(np.median(non_zero_depths)) if non_zero_depths.size > 0 else 1.0
+        )
         if np.isnan(median_depth) or median_depth <= 0:
             median_depth = 1.0
 
@@ -158,15 +162,28 @@ class BaseAccuracy:
             f"due to structural noise/discordance."
         )
 
-        intervals = []
-        # Fast numpy edge detection to find start/end of masked blocks
         edges = np.diff(np.concatenate(([0], mask_arr.view(np.int8), [0])))
         starts = np.where(edges == 1)[0]
         ends = np.where(edges == -1)[0]
 
-        for s, e in zip(starts, ends):
-            if e - s >= 50:  # Filter out noisy drops (keep blocks >=50bp)
-                mean_depth = np.mean(depth_arr[s:e])
+        # Only keep masked intervals that are at least 20 bp long
+        structural_blocks = [
+            [int(s), int(e)] for s, e in zip(starts, ends) if (e - s) >= 20
+        ]
+
+        # Merge adjacent masked intervals separated by < self.merge_gap_bp
+        merged_bounds = []
+        for s, e in structural_blocks:
+            if merged_bounds and (s - merged_bounds[-1][1]) < self.merge_gap_bp:
+                merged_bounds[-1][1] = e
+            else:
+                merged_bounds.append([s,e])
+
+        intervals = []
+        for s, e in merged_bounds:
+            if e - s >= 50:
+                mean_depth = float(np.mean(depth_arr[s:e]))
+                mean_concord = float(np.mean(concord_arr[s:e])) * 100.0
                 if mean_depth > upper_depth:
                     reason = "High Depth (Collapsed Repeat / Multi-copy Operon)"
                 elif mean_depth < lower_depth:
@@ -179,12 +196,14 @@ class BaseAccuracy:
                         "start": int(s),
                         "end": int(e),
                         "length": int(e - s),
+                        "mean_depth": round(mean_depth, 1),
+                        "mean_concordance": round(mean_concord, 1),
                         "reason": reason,
                     }
                 )
 
         intervals.sort(key=lambda x: x["length"], reverse=True)
-        self.masked_regions = intervals[:50]  # Store top 50 largest regions
+        self.masked_regions = intervals[:50]
 
         return concord_arr, mask_arr
 
@@ -206,7 +225,6 @@ class BaseAccuracy:
             motif_discordant = defaultdict(int)
 
             for i in range(self.seq_len - k + 1):
-                # O(1) mask lookup across the k-mer window
                 if (mask_cumsum[i + k] - mask_cumsum[i]) > 0:
                     continue
 
@@ -234,7 +252,6 @@ class BaseAccuracy:
             if not eligible_motifs:
                 continue
 
-            # Bonferroni-corrected alpha across all tested motifs of length k
             corrected_alpha = 0.01 / len(eligible_motifs)
 
             for kmer, total in eligible_motifs.items():
@@ -263,7 +280,9 @@ class BaseAccuracy:
                                 "error_rate": error_rate,
                                 "fold_increase": fold_increase,
                                 "p_value": test.pvalue,
-                                "adj_p_value": min(1.0, test.pvalue * len(eligible_motifs)),
+                                "adj_p_value": min(
+                                    1.0, test.pvalue * len(eligible_motifs)
+                                ),
                             }
                         )
 
