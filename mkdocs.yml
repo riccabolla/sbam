@@ -5,14 +5,17 @@ site_author: "Riccardo Bollini"
 nav:
   - Home: index.md
   - Installation: installation.md
-  - Usage: usage.md
+  - Usage:
+    - Input: input.md
+    - Output: output.md
+
 theme:
   name: readthedocs
   custom_dir: overrides
 
 markdown_extensions:
   - admonition
-
+  - def_list
   - codehilite
 
 
