@@ -1,87 +1,116 @@
-## Input
+# Input, Usage & Outputs
 
-``sbam`` will take as input the consensu assembly in ``fasta`` format with the ``fastq`` used to generate the file. 
+`sbam` takes as input a consensus genome assembly in `FASTA` format and the long reads in `FASTQ` (or `FASTA`, uncompressed or `.gz`) used to generate the assembly.
 
-### Basic usage
+---
 
-```python
-sbam -a assembly.fasta -r read.fastq.gz -o path/output/dir
+## Basic Usage
+
+### Standard Single-Sample Run
+
+```bash
+sbam -a assembly.fasta -r reads.fastq.gz -o path/to/output_dir
 ```
 
-### Parameters
+### Production Run with Genome Size, Log File, and Cleanup
 
-#### Input/Output
+```bash
+sbam -a assembly.fasta \
+     -r reads.fastq.gz \
+     -o path/to/output_dir \
+     -t 8 \
+     -g 5.3m \
+     --read-type lr:hq \
+     --clean \
+     --log
+```
 
-``-a assembly.fasta, --assembly assembly.fasta
-``
+### Cohort Summary Mode (`sbam summarize`)
 
-Input assembly file
+When evaluating dozens of isolates across a study, use `sbam summarize` to compile all generated `*_sbam_metrics.json` files into a single tab-separated (`.tsv`) or comma-separated (`.csv`) summary table:
 
-``
--r read.fastq.gz, --read read.fastq.gz
-``
+```bash
+sbam summarize path/to/results/*/*_sbam_metrics.json -o cohort_summary.tsv
+```
 
-Input ``fastq`` file
+---
 
-``
--o outputdir, --outdir outputdir
-``
+## Command-Line Parameters
 
-Path to the output directory
+### Required Arguments (`sbam`)
 
-#### Optional
+| Flag | Argument | Description |
+| :--- | :--- | :--- |
+| `-a`, `--assembly` | `FILE` | Path to the polished consensus assembly (`FASTA`). |
+| `-r`, `--reads` | `FILE` | Path to the long reads (`FASTQ` / `FASTA`, plain or `.gz`). |
+| `-o`, `--outdir` | `DIR` | Output directory for reports, metrics, and alignments. |
 
-``
--t cpus, --threads cpus
-``
+### Optional Arguments (`sbam`)
 
-Number of cpus provided
+| Flag | Default | Description |
+| :--- | :--- | :--- |
+| `-t`, `--threads` | `4` | Number of CPU threads allocated to `minimap2`, `samtools sort`, and `pysam` base pileup workers. |
+| `-g`, `--genome_size`, `--genome-size` | `None` | Expected species genome size. Accepts suffixes such as `4.8m`, `4.8mbp`, `4800kb`, or raw integer base pairs `4800000`. |
+| `--buffer-size` | `50000` | Length of the cyclic sequence buffer ($\text{bp}$) appended to the $3'$ end of each contig for circular read mapping ($\ge 1000\text{ bp}$). |
+| `--read-type` | `map-ont` | `minimap2` alignment preset. Choices: `map-ont` (standard ONT), `lr:hq` (ONT R10.4.1 / Q20+ SUP), `map-pb` (PacBio CLR), `map-hifi` (PacBio HiFi). |
+| `--min-concordance` | `0.75` | Minimum empirical read-to-assembly base concordance ($0.0 - 1.0$) before a position is flagged as discordant. |
+| `--depth-variance` | `2.5` | Fold-change threshold relative to median contig depth ($\text{median} \times 2.5$ and $\text{median} / 2.5$) used to mask collapsed repeats or coverage dropouts. |
+| `--min-ori-length` | `500000` | Minimum contig length ($\text{bp}$) required to run bidirectional GC-skew replication symmetry analysis. |
+| `--clean`, `--remove-intermediates` | `False` | Deletes intermediate files (`cyclic_assembly.fasta`, `alignment.sorted.bam`, and `alignment.sorted.bam.bai`) after generating the HTML and JSON reports. |
+| `--log`, `--log-file` | `None` | Writes a complete unified execution log (capturing all `sbam` console output, `minimap2` stderr, and `samtools` stderr). If passed without a filename (`--log`), saves to `<outdir>/sbam.log`. |
 
-``
--g genome_size, --genome_size genome_size
-``
+---
 
-Expected genome size based on the specie
+## How to Choose Key Parameters
 
-``
---buffer-size buffer_size
-``
+To get the most accurate and efficient results from `sbam`, it helps to understand how the optional parameters interact with your sequencing data.
 
-Size of the cyclic buffer size for mapping
+### `-g, --genome_size`
 
-``
---read-type read_type
-``
+`sbam` evaluates the assembly against the expected biological size of the organism. It calculates a total **Genome Completeness** score, allowing it to warn you if the assembler dropped massive regions of DNA ($< 90\%$ of expected size), if uncollapsed haplotypes or contamination inflated the assembly ($> 110\%$), or if the primary chromosome is severely fragmented ($< 85\%$ of expected genome size despite total length being normal).
 
-Specify sequencing used, required by minimap (default is map-ont)
+It does not require an exact base-pair value, as it tolerates a $\pm 10\%$ biological accessory-genome variance before triggering a warning. You can provide a known species reference size (e.g., `-g 5.3m` for *Klebsiella pneumoniae*) or estimate it directly from your raw reads using tools like [lrge](https://github.com/mbhall88/lrge).
 
+### `--buffer-size`
 
-#### How to choose
+Bacterial chromosomes and plasmids are physical circles, but a `FASTA` file represents each sequence as a linear string of bases. The coordinate where a circular sequence is artificially opened is called the "seam" or junction. If a sequencing read spans this artificial breakpoint, a standard aligner mapping against a linearized reference will split the read into two supplementary alignments or soft-clip the overhanging bases.
 
-To get the most accurate and efficient results from SBAM, it helps to understand how the optional parameters affect the pipeline.
+To solve this, `sbam` copies the first $N$ bases of each contig and appends them to the $3'$ end of the sequence, creating a continuous runway across the seam. Reads spanning the boundary align continuously across coordinate $L$ (the original contig length) rather than clipping.
 
-``-g, --genome_size``
+**Rule of thumb:** Ensure `--buffer-size` is larger than your longest sequencing reads. For standard Nanopore libraries with read $N_{50} \approx 10\text{--}25\text{ kb}$, the default `50000` ($50\text{ kb}$) provides ample margin. If you are analyzing ultra-long Nanopore libraries with reads exceeding $100\text{ kb}$, increase the buffer accordingly (e.g., `--buffer-size 150000`).
 
-SBAM evaluates the assembly against expected biological size. It calculates a total Genome Completeness score, allowing it to warn you if the assembler dropped massive regions of DNA or if the main chromosome is severely fragmented compared to the expected size.
+### `-t, --threads`
 
-It does not expect an exact value, since it tolerates a 10% of difference before calling a warn.
-
-You can provide it by yourself if you already know the common genome size for the analyzed specie, or you can use tools like [lrge](https://github.com/mbhall88/lrge) to calculate genome size based on ``fastq``.
-
-``---buffer-size``
-
-Bacterial chromosomes are physical circles, but a ``FASTA`` file represents a sequence as a linear string of bases. The point where a circular sequence is artificially linearized is often called the "seam" or breakpoint. If a sequencing read spans this artificial breakpoint, a standard aligner mapping against the linearized reference may represent the read as two separate alignment segments or as a primary alignment with a soft-clipped portion.
-
-To address this, SBAM copies the first N bases of the assembly and appends them to the end of the sequence, creating a continuous "runway" for reads that cross the seam. This extended sequence acts as a cyclic buffer, allowing reads spanning the artificial breakpoint to align continuously rather than being treated as split or partially clipped alignments
-
-It is important that the buffer size is larger than your longest sequencing reads. Indeed. if your reads average 20kb, the default buffer of 50000 (50kb) provides plenty of room. However, if you are using ultra-long Oxford Nanopore sequencing (where reads can easily reach 100kb+), you must increase this (e.g., --buffer-size 150000). If the buffer is too small, long reads will clip, and SBAM will falsely flag the chromosome as broken!
-
-``-t, --threads``
-
-SBAM uses threads during two steps: the minimap2 alignment and the base-level motif profiling.
-
-When possible, we recommend to run it with 4 to 8 threads, after that value there is a progressive diminishing returns.
+`sbam` parallelizes two compute-intensive stages: `minimap2` read alignment and `pysam` base-level pileup profiling. We recommend running `sbam` with **4 to 8 threads**, after which disk I/O and BAM decompression yield diminishing returns.
 
 ![Figure 1. Threads usage](figure/thread_scalability.png)
 
-*Figure 1. CPUs usage
+*Figure 1. CPU thread scalability across alignment and pileup stages.*
+
+---
+
+## Output Files
+
+Running `sbam` produces the following files inside `--outdir`:
+
+1. **`<assembly>_sbam_report.html`**:
+   A self-contained, interactive HTML dashboard displaying:
+   * **Executive Summary**: Overall assembly verdict (`ACCEPT`, `REVIEW`, `ACCEPT WITH CAUTION`, or `FAIL`) and a per-contig overview table with inferred replicon types and circularity evaluations.
+   * **Confidence Profile Cards**: At-a-glance status for Structural Integrity, Replication Structure, Base-Level Fidelity, and Genome Completeness.
+   * **Circularity Table**: Per-contig length, average depth, relative copy number (e.g., $1.0\text{c}$, $2.8\text{c}$), spanning vs. clipped read counts, and junction scores.
+   * **Replication Structure & Polar Plots**: Replichore symmetry ($^\circ$), predicted *oriC* and *ter* coordinates, *oriC* offset from $0\text{ bp}$, and interactive Plotly polar GC-skew maps.
+   * **Base-Level Analysis**: Total masked bases ($\%$), a table of the largest excluded structural regions ($\ge 50\text{ bp}$, including mean depth and mean concordance), and any statistically significant discordant $k$-mer motifs.
+
+2. **`<assembly>_sbam_metrics.json`**:
+   A structured machine-readable JSON file containing the verdict, completeness percentage, per-contig junction metrics, replication symmetry coordinates, masked intervals, and systematic error motifs. Used as input for `sbam summarize` or custom workflow parsers.
+
+3. **`cohort_summary.tsv` / `.csv`** *(generated via `sbam summarize`)*:
+   A multi-sample summary table containing 19 columns per isolate:
+   `sample`, `verdict`, `num_contigs`, `total_length_bp`, `completeness_pct`, `primary_contig_id`, `primary_length_bp`, `primary_depth_x`, `primary_junction_score`, `primary_circularity_status`, `primary_symmetry_deg`, `primary_oric_offset_kb`, `primary_replication_status`, `circular_plasmids_count`, `failed_contigs_count`, `masked_bases_bp`, `masked_pct`, `systematic_error_motifs_count`, and `top_error_motifs`.
+
+4. **`sbam.log`** *(optional, created when `--log` is passed)*:
+   A complete chronological log combining `sbam` progress messages, `minimap2` alignment statistics, and `samtools` output.
+
+5. **Intermediate Files** *(automatically deleted when `--clean` is passed)*:
+   * `cyclic_assembly.fasta`: Contigs extended with the cyclic $3'$ buffer.
+   * `alignment.sorted.bam` & `alignment.sorted.bam.bai`: Sorted and indexed read alignments against the cyclic assembly.
