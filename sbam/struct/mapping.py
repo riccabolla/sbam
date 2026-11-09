@@ -1,21 +1,23 @@
 import os
 import subprocess
 import sys
+import tempfile
 
 
 class ReadAligner:
-    def __init__(self, reads_path, cyclic_fasta_path, outdir, threads=4):
+    def __init__(self, reads_path, cyclic_fasta_path, outdir, threads=4, log_path=None):
         self.reads = reads_path
         self.reference = cyclic_fasta_path
         self.outdir = outdir
         self.threads = threads
         self.bam_path = os.path.join(self.outdir, "alignment.sorted.bam")
-        self.minimap_log = os.path.join(self.outdir, "minimap2.log")
+        self.log_path = log_path
 
     def run_mapping(self, read_type="map-ont"):
         """
         Runs minimap2 and pipes output to samtools to create a sorted, indexed BAM.
-        read_type: 'map-ont' for Nanopore, 'map-pb' for PacBio.
+        If self.log_path is set, appends minimap2 and samtools stderr to the unified log file;
+        otherwise uses a temporary file that is automatically removed on completion.
         """
         print(" > [minimap2] Aligning reads to cyclic reference...")
 
@@ -40,39 +42,47 @@ class ReadAligner:
             "-",
         ]
 
+        temp_err_file = None
         try:
-            with open(self.minimap_log, "w") as mm_err_log:
+            if self.log_path:
+                err_stream = open(self.log_path, "a", encoding="utf-8")
+                err_stream.write("\n--- [minimap2 / samtools alignment log] ---\n")
+                err_stream.flush()
+            else:
+                temp_err_file = tempfile.NamedTemporaryFile(
+                    mode="w+", suffix="_align.log", delete=False, encoding="utf-8"
+                )
+                err_stream = temp_err_file
+
+            try:
                 p_minimap = subprocess.Popen(
                     minimap_cmd,
                     stdout=subprocess.PIPE,
-                    stderr=mm_err_log,
+                    stderr=err_stream,
                 )
                 p_sort = subprocess.Popen(
                     sort_cmd,
                     stdin=p_minimap.stdout,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                    stderr=err_stream,
                 )
 
-                # Allow p_minimap to receive a SIGPIPE if p_sort exits early
                 if p_minimap.stdout is not None:
                     p_minimap.stdout.close()
 
-                _, sort_err = p_sort.communicate()
+                p_sort.communicate()
                 minimap_rc = p_minimap.wait()
+            finally:
+                err_stream.flush()
+                if self.log_path:
+                    err_stream.close()
 
-            if minimap_rc != 0:
-                with open(self.minimap_log, "r") as mm_err_log:
-                    err_tail = "".join(mm_err_log.readlines()[-20:])
+            if minimap_rc != 0 or p_sort.returncode != 0:
+                err_source = self.log_path if self.log_path else temp_err_file.name
+                with open(err_source, "r", encoding="utf-8", errors="replace") as ef:
+                    err_tail = "".join(ef.readlines()[-25:])
                 print(
-                    f"[ERROR] minimap2 failed (exit code {minimap_rc}):\n{err_tail}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-
-            if p_sort.returncode != 0:
-                print(
-                    f"[ERROR] samtools sort failed: {sort_err.decode('utf-8', errors='replace')}",
+                    f"[ERROR] Alignment failed (minimap2={minimap_rc}, samtools={p_sort.returncode}):\n{err_tail}",
                     file=sys.stderr,
                 )
                 sys.exit(1)
@@ -94,3 +104,11 @@ class ReadAligner:
         except Exception as e:
             print(f"[ERROR] Alignment pipeline failed: {e}", file=sys.stderr)
             sys.exit(1)
+        finally:
+            if temp_err_file is not None:
+                try:
+                    temp_err_file.close()
+                    if os.path.exists(temp_err_file.name):
+                        os.remove(temp_err_file.name)
+                except OSError:
+                    pass
