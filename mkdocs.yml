@@ -1,21 +1,42 @@
-site_name: sbam
-site_url: https://sbam.readthedocs.io/
-site_description: "Structural and base-level analysis of ONT microbial assemblies"
-site_author: "Riccardo Bollini"
+
+site_name: sbam Documentation
+site_description: Structural and Base-Level Analysis of Microbial Assemblies
+site_url: https://sbam.readthedocs.io/en/latest/
+
+repo_url: https://github.com/riccabolla/sbam
+repo_name: riccabolla/sbam
+
+theme:
+  name: material
+  custom_dir: overrides
+  features:
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+  palette:
+    - scheme: default
+      primary: blue grey
+      accent: light blue
+
 nav:
   - Home: index.md
   - Installation: installation.md
-  - Usage:
-    - Input: input.md
-    - Output: output.md
-
-theme:
-  name: readthedocs
-  custom_dir: overrides
+  - Input, Usage & Outputs: input.md
+  - Methodology:
+      - Circularity: circularity.md
+      - Replication Structure: replication-structure.md
+      - Base-Level Analysis: base-level-analysis.md
 
 markdown_extensions:
+  - tables
   - admonition
-  - def_list
-  - codehilite
+  - attr_list
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
 
-
+extra_javascript:
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
