@@ -1,8 +1,8 @@
 # Circularity & Replicon Evaluation
 
-Prokaryotic chromosomes and most plasmids are covalently closed circular DNA molecules. When an assembler outputs a circular contig in `FASTA` format, it must cut the circle at an arbitrary coordinate ($0\text{ bp}$ to $L\text{ bp}$). 
+Prokaryotic chromosomes and most plasmids are covalently closed circular DNA molecules. When an assembler outputs a circular contig in `FASTA` format, it must cut the circle at an arbitrary coordinate ($0\text{ bp}$ to $L\text{ bp}$).
 
-However, assemblers frequently misreport linear fragments, unresolved repeat boundaries, or chimeric joins as "circular," or leave short terminal overlaps/gaps at the linearization seam. `sbam` empirically tests physical circularity by mapping long reads across a cyclically buffered reference.
+However, assemblers frequently misreport linear fragments, unresolved repeat boundaries, or chimeric joins as "circular," or leave short terminal overlaps or gaps at the linearization seam. `sbam` empirically tests physical circularity by mapping long reads across a cyclically buffered reference.
 
 ---
 
@@ -37,7 +37,7 @@ $$M = \begin{cases} 500\text{ bp} & \text{if } L < 20,000\text{ bp} \\ 1,000\tex
 
 ### Filtering Natural Unclipped Read Ends
 
-A critical pitfall in naive junction evaluators is treating *all* reads that cross $x = L$ with $< M\text{ bp}$ of overhang as "broken." Because physical DNA molecules shear at random positions during extraction, a read of aligned length $L_{\text{read}}$ crossing a perfectly intact junction will naturally terminate within $M\text{ bp}$ of the junction with probability:
+A critical flaw in naive junction evaluators is treating *all* reads that cross $x = L$ with $< M\text{ bp}$ of overhang as "broken." Because physical DNA molecules shear at random positions during extraction, a read of aligned length $L_{\text{read}}$ crossing a perfectly intact junction will naturally terminate within $M\text{ bp}$ of the junction with probability:
 
 $$P(\text{natural end within } M) \approx \frac{2M}{L_{\text{read}}}$$
 
@@ -49,7 +49,7 @@ To eliminate this bias, `sbam` inspects the CIGAR string (`cigartuples`) and ter
    * The read has $< M\text{ bp}$ extension on the left or right side **and** exhibits soft-clipping (`CIGAR` op `4`) or hard-clipping (`CIGAR` op `5`) of $\ge 50\text{ bp}$ on that end; **OR**
    * The read alignment starts or terminates abruptly at the junction boundary ($|\text{reference\_start} - L| \le 15\text{ bp}$ or $|\text{reference\_end} - L| \le 15\text{ bp}$).
 2. **Neutral Natural Read Ends ($N_{\text{neutral}}$)**:
-   * The read crosses $x = L$ with $< M\text{ bp}$ extension on one side, has **no terminal clipping** ($< 50\text{ bp}$), and does not pile up at the exact seam coordinate. These represent normal molecule ends and are excluded from the denominator.
+   * The read crosses $x = L$ with $< M\text{ bp}$ extension on one side, has **no terminal clipping** ($< 50\text{ bp}$), and does not pile up at the exact seam coordinate. These represent normal physical molecule ends and are excluded from the denominator.
 
 ### Junction Score & Status Thresholds
 
@@ -57,13 +57,14 @@ The junction spanning score $J$ is computed as:
 
 $$J = \frac{N_{\text{span}}}{N_{\text{span}} + N_{\text{broken}}}$$
 
-Contigs are assigned a circularity status based on coverage and contig size:
+Contigs are assigned a circularity status based on coverage, mode, and contig size:
 
-* **`NO_DATA`**: Average contig depth $< 5.0\times$.
+* **`NO_DATA`**: Average contig depth $< 5.0\times$ (triggers the `INSUFFICIENT COVERAGE` verdict if on the primary chromosome).
+* **`LINEAR`**: Assigned when `--linear` mode is enabled for organisms with naturally linear chromosomes or plasmids (e.g., *Streptomyces*, *Borrelia*).
 * **`PASS`**:
   * $J > 0.60$ for contigs $\ge 50\text{ kb}$
-  * $J > 0.40$ for small plasmids $< 50\text{ kb}$ (where higher curvature of read lengths relative to contig size increases boundary effects)
-* **`FAIL`**: $N_{\text{span}} = 0$ or $J$ falls below the size-adjusted threshold.
+  * $J > 0.40$ for small plasmids $< 50\text{ kb}$
+* **`FAIL`**: $N_{\text{span}} = 0$ or $J$ falls below the size-adjusted threshold. Any secondary contig with `FAIL` status automatically downgrades an otherwise passing assembly to `REVIEW`.
 
 ---
 
@@ -77,14 +78,18 @@ Setting the longest contig's depth as the chromosomal baseline ($\text{Depth}_{\
 
 $$\text{Copy Number}_c = \frac{\text{Depth}_c}{\text{Depth}_{\text{chr}}}$$
 
-Using length, circularity status, and copy number, each secondary contig is classified automatically:
+Using length, circularity status, and copy number, each contig is classified automatically:
 
 | Condition | Inferred Classification | Dashboard Evaluation |
 | :--- | :--- | :--- |
-| Longest contig ($\ge 1\text{ Mb}$ or $\ge 85\%$ of `-g`) | `Primary Chromosome` | `Reliable Circular Graph` (if symmetry acceptable) |
-| `PASS` and $\text{Copy Number} > 10.0\text{c}$ | `High-Copy Plasmid (Rolling Circle)` | `Structurally Intact` |
-| `PASS` and $\text{Copy Number} \le 10.0\text{c}$ | `Circular Plasmid` | `Structurally Intact` |
-| `FAIL` and $\text{Copy Number} < 0.5\text{c}$ | `Low-Coverage Debris` | `Likely an artifact` |
-| `FAIL` and $N_{\text{span}} = 0, N_{\text{broken}} = 0$ | `Linear Fragment` | `Linear Fragment` |
-| `FAIL` and $N_{\text{broken}} > 10$ ($\text{Copy Number} > 10.0\text{c}$) | `Misassembled High-Copy Plasmid` | `Contradicted Junction` |
-| `FAIL` and $N_{\text{broken}} > 10$ ($\text{Copy Number} \le 10.0\text{c}$) | `Misassembled Junction` | `Contradicted Junction` |
+| Longest contig (standard mode) | `Primary Chromosome` | `Reliable Replicon Graph` (if symmetry acceptable) |
+| Longest contig (`--linear` mode) | `Linear Primary Chromosome` | `Reliable Replicon Graph` |
+| Secondary contig $\ge 500\text{ kb}$ (`PASS` / `LINEAR`) | `Secondary Chromosome / Megaplasmid` | `Structurally Intact` (or replication evaluation) |
+| Secondary contig $\ge 500\text{ kb}$ (`FAIL`) | `Misassembled Secondary Replicon` | `Contradicted Junction` |
+| Secondary $< 500\text{ kb}$, `PASS`, $\text{Copy Number} \ge 10.0\text{c}$ | `High-Copy Circular Plasmid` | `Structurally Intact` |
+| Secondary $< 500\text{ kb}$, `PASS`, $0.7\text{c} \le \text{Copy Number} < 10.0\text{c}$ | `Circular Plasmid` | `Structurally Intact` |
+| Secondary $< 500\text{ kb}$, `PASS`, $\text{Copy Number} < 0.7\text{c}$ | `Sub-stoichiometric Circular Plasmid` | `Structurally Intact (<0.7c: partial plasmid loss or extraction bias)` |
+| Secondary $< 500\text{ kb}$, `FAIL`, $\text{Copy Number} < 0.5\text{c}$ | `Low-Coverage Debris` | `Likely Low-Coverage Artifact` |
+| Secondary $< 500\text{ kb}$, `FAIL`, $N_{\text{span}} = 0, N_{\text{broken}} = 0$ | `Linear Fragment` | `Unbridged / Linear Fragment` |
+| Secondary $< 500\text{ kb}$, `FAIL`, $N_{\text{broken}} > 10$ ($\ge 10.0\text{c}$) | `Misassembled High-Copy Plasmid` | `Contradicted Junction` |
+| Secondary $< 500\text{ kb}$, `FAIL`, $N_{\text{broken}} > 10$ ($< 10.0\text{c}$) | `Misassembled Junction` | `Contradicted Junction` |
