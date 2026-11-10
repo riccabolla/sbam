@@ -4,89 +4,109 @@ import pytest
 from sbam.base.base import BaseAccuracy
 
 
+@patch("sbam.base.base.mp.Pool")
 @patch("sbam.base.base.SeqIO.parse")
-@patch("sbam.base.base.pysam.AlignmentFile")
-def test_motif_analysis_logic(mock_bam, mock_seqio):
+def test_p0_end_to_end_motif_recovery_regression(mock_seqio, mock_pool):
     """
-    Test that analyze_motifs() detects a 5-mer motif ('CCAGG') with systematic
-    basecalling discordance while ignoring concordant background sequence.
+    P0 Regression Test: Runs analyze_motifs() end-to-end on a synthetic pileup
+    with injected errors at 'CCAGG'. Verifies that point motif discordances are
+    not masked out and that majority/minority counters reconcile.
     """
+    unit = "TTTTTCCAGG"
+    repeats = 200
+    seq = unit * repeats
+    seq_len = len(seq)
+
     mock_record = MagicMock()
     mock_record.id = "contig_1"
-
-    # Build a sequence with 600 occurrences of 'CCAGG' (>=500 threshold)
-    # separated by concordant 'TTTTT' spacers
-    unit = "TTTTTCCAGG"
-    repeats = 600
-    seq = unit * repeats
     mock_record.seq = seq
     mock_seqio.return_value = [mock_record]
 
-    engine = BaseAccuracy("dummy.bam", "dummy.fasta", threads=1, k_list=[5])
+    raw_depths = np.full(seq_len, 100, dtype=np.int32)
+    raw_matches = np.full(seq_len, 99, dtype=np.int32)
 
-    concord_arr = np.ones(len(seq), dtype=float)
-    # Drop concordance to 0.40 at the center 'A' (index 7 of each 10-bp unit)
+    # Inject 60% concordance (sub-consensus bias) at 195 sites and 40% (<50% consensus error) at 5 sites
     for i in range(repeats):
-        center_pos = i * len(unit) + 7
-        concord_arr[center_pos] = 0.40
+        raw_matches[i * len(unit) + 7] = 40 if i < 5 else 60
 
-    mask_arr = np.zeros(len(seq), dtype=bool)
+    pool_instance = MagicMock()
+    pool_instance.__enter__.return_value = pool_instance
+    pool_instance.map.return_value = [(0, seq_len, raw_depths, raw_matches)]
+    mock_pool.return_value = mock_instance = pool_instance
 
-    with patch.object(
-        engine, "build_fidelity_profile", return_value=(concord_arr, mask_arr)
-    ):
-        results = engine.analyze_motifs()
+    engine = BaseAccuracy(
+        "dummy.bam",
+        "dummy.fasta",
+        threads=1,
+        k_list=[5],
+        min_concordance=0.85,
+        canonical=True,
+    )
+    with patch.object(engine, "_get_buffer_length", return_value=0):
+        families = engine.analyze_motifs(min_occurrences=100, min_discordant_count=10)
 
-    assert len(results) > 0
-    flagged_motifs = {r["motif"]: r for r in results}
-    assert "CCAGG" in flagged_motifs
-    assert flagged_motifs["CCAGG"]["occurrences"] == 600
-    assert flagged_motifs["CCAGG"]["discordant_count"] == 600
-    assert flagged_motifs["CCAGG"]["fold_increase"] > 2.0
-    assert "adj_p_value" in flagged_motifs["CCAGG"]
+    assert engine.evaluated_bases == seq_len
+    assert engine.discordant_bases == 200
+    assert engine.consensus_error_bases == 5
+    assert engine.subconsensus_bias_bases == 195
+    assert engine.explained_discordant_bases == 200
+    assert engine.explained_discordant_pct == pytest.approx(100.0)
+
+    assert len(families) == 1
+    assert families[0]["motif"] == "CCAGG/CCTGG"
+    assert families[0]["occurrences"] == 200
+    assert families[0]["discordant_count"] == 200
+    assert families[0]["consensus_error_count"] == 5
 
 
 @patch("sbam.base.base.mp.Pool")
 @patch("sbam.base.base.SeqIO.parse")
-def test_cyclic_buffer_depth_folding_and_masking(mock_seqio, mock_pool):
+def test_palindromic_kmer_counted_once_per_site(mock_seqio, mock_pool):
     """
-    Verify that build_fidelity_profile folds cyclic buffer depths/matches back
-    into [0, buffer_len) and populates mean_depth and mean_concordance on masked regions.
+    Regression Test: Ensures even-length palindromic k-mers (e.g., 'TCGA') are
+    counted exactly once per genomic occurrence (never double-counted across strands)
+    and that fold_increase equals error_rate / baseline_discordance_rate.
     """
-    seq_len = 1000
-    buffer_len = 200
-    total_len = seq_len + buffer_len
+    unit = "AAAATCGAAAAA"  # 12 bp unit containing one 'TCGA' at indices 4..8
+    repeats = 200
+    seq = unit * repeats
+    seq_len = len(seq)
 
     mock_record = MagicMock()
     mock_record.id = "contig_1"
-    mock_record.seq = "A" * seq_len
+    mock_record.seq = seq
     mock_seqio.return_value = [mock_record]
 
-    # Simulate split coverage in the first 200 bp (50x at start + 50x in cyclic tail = 100x folded)
-    # and a 100-bp low-depth dropout at [500:600] (depth = 10x)
-    raw_depths = np.full(total_len, 100, dtype=np.int32)
-    raw_depths[:buffer_len] = 50
-    raw_depths[seq_len : seq_len + buffer_len] = 50
-    raw_depths[500:600] = 10
+    raw_depths = np.full(seq_len, 100, dtype=np.int32)
+    raw_matches = np.full(seq_len, 99, dtype=np.int32)
 
-    raw_matches = raw_depths.copy()
+    # Inject discordance at offset k//2 = 2 of 'TCGA' ('G' at index 6 of each unit)
+    for i in range(repeats):
+        raw_matches[i * len(unit) + 6] = 60
 
     pool_instance = MagicMock()
     pool_instance.__enter__.return_value = pool_instance
-    pool_instance.map.return_value = [(0, total_len, raw_depths, raw_matches)]
+    pool_instance.map.return_value = [(0, seq_len, raw_depths, raw_matches)]
     mock_pool.return_value = pool_instance
 
-    engine = BaseAccuracy("dummy.bam", "dummy.fasta", threads=1)
-    with patch.object(engine, "_get_buffer_length", return_value=buffer_len):
-        concord_arr, mask_arr = engine.build_fidelity_profile()
+    engine = BaseAccuracy(
+        "dummy.bam",
+        "dummy.fasta",
+        threads=1,
+        k_list=[4],
+        min_concordance=0.85,
+        canonical=True,
+    )
+    with patch.object(engine, "_get_buffer_length", return_value=0):
+        families = engine.analyze_motifs(min_occurrences=100, min_discordant_count=10)
 
-    # First 200 bp should NOT be masked because 50x + 50x = 100x matches median depth
-    assert not np.any(mask_arr[:buffer_len])
-    # Region [500:600] has 10x depth (< 100 / 2.5 = 40x) and should be masked
-    assert np.all(mask_arr[500:600])
-    assert engine.masked_bases == 100
-    assert len(engine.masked_regions) == 1
-    assert engine.masked_regions[0]["start"] == 500
-    assert engine.masked_regions[0]["end"] == 600
-    assert engine.masked_regions[0]["mean_depth"] == pytest.approx(10.0)
-    assert engine.masked_regions[0]["mean_concordance"] == pytest.approx(100.0)
+    tcga_hits = [f for f in families if f["motif"] == "TCGA/TCGA"]
+    assert len(tcga_hits) == 1
+    hit = tcga_hits[0]
+    # Must be 200 occurrences (once per site), NOT 400!
+    assert hit["occurrences"] == 200
+    assert hit["discordant_count"] == 200
+    assert hit["is_palindrome"] is True
+    assert hit["fold_increase"] == pytest.approx(
+        hit["error_rate"] / engine.baseline_discordance_rate
+    )

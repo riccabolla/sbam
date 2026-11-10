@@ -2,11 +2,23 @@ import pysam
 
 
 class JunctionEvaluator:
-    def __init__(self, bam_path, orig_lengths, min_clip_len=50, boundary_tol=15):
+    def __init__(
+        self,
+        bam_path,
+        orig_lengths,
+        min_clip_len=50,
+        boundary_tol=15,
+        chr_threshold=0.60,
+        plasmid_threshold=0.40,
+        linear_mode=False,
+    ):
         self.bam_path = bam_path
         self.orig_lengths = orig_lengths
         self.min_clip_len = min_clip_len
         self.boundary_tol = boundary_tol
+        self.chr_threshold = chr_threshold
+        self.plasmid_threshold = plasmid_threshold
+        self.linear_mode = linear_mode
         self.results = {}
 
     @staticmethod
@@ -38,8 +50,6 @@ class JunctionEvaluator:
 
                 target_contig = f"{contig_id}_cyclic"
                 junction = orig_length
-
-                # Dynamic overlap requirement based on contig size
                 min_overlap = 500 if orig_length < 20000 else 1000
 
                 spanning_reads = 0
@@ -67,7 +77,6 @@ class JunctionEvaluator:
                         total_aligned_bases / orig_length if orig_length > 0 else 0.0
                     )
 
-                    # Fetch reads within a small window around the artificial junction
                     fetch_start = max(0, junction - self.boundary_tol)
                     fetch_end = junction + self.boundary_tol
 
@@ -84,7 +93,6 @@ class JunctionEvaluator:
                         left_extension = junction - read.reference_start
                         right_extension = read.reference_end - junction
 
-                        # 1. Read solidly bridges the junction on both sides
                         if (
                             left_extension >= min_overlap
                             and right_extension >= min_overlap
@@ -92,7 +100,6 @@ class JunctionEvaluator:
                             spanning_reads += 1
                             continue
 
-                        # 2. Check if the read is genuinely broken/clipped at the junction
                         lead_clip = self._leading_clip_len(read)
                         trail_clip = self._trailing_clip_len(read)
 
@@ -112,7 +119,6 @@ class JunctionEvaluator:
                         if clipped_near_left or clipped_near_right or stops_at_junction:
                             broken_reads += 1
                         else:
-                            # Natural unclipped read end landing within min_overlap of junction
                             neutral_reads += 1
 
                     raw_stats[contig_id] = {
@@ -143,6 +149,13 @@ class JunctionEvaluator:
             if avg_depth < 5.0:
                 score = 0.0
                 status = "NO_DATA"
+            elif self.linear_mode:
+                score = (
+                    spanning_reads / total_junction_reads
+                    if total_junction_reads > 0
+                    else 0.0
+                )
+                status = "LINEAR"
             elif spanning_reads == 0:
                 score = 0.0
                 status = "FAIL"
@@ -152,25 +165,42 @@ class JunctionEvaluator:
                     if total_junction_reads > 0
                     else 0.0
                 )
-                threshold = 0.4 if orig_length < 50000 else 0.6
+                threshold = (
+                    self.plasmid_threshold
+                    if orig_length < 50000
+                    else self.chr_threshold
+                )
                 status = "PASS" if score > threshold else "FAIL"
 
-            classification = "Unknown"
             if orig_length == max_len:
-                classification = "Primary Chromosome"
+                classification = (
+                    "Linear Primary Chromosome"
+                    if self.linear_mode
+                    else "Primary Chromosome"
+                )
+            elif orig_length >= 500000:
+                classification = (
+                    "Secondary Chromosome / Megaplasmid"
+                    if status in ("PASS", "LINEAR")
+                    else "Misassembled Secondary Replicon"
+                )
             else:
                 if status == "PASS":
-                    if copy_number > 10.0:
-                        classification = "High-Copy Plasmid (Rolling Circle)"
+                    if copy_number >= 10.0:
+                        classification = "High-Copy Circular Plasmid"
+                    elif copy_number < 0.7:
+                        classification = "Sub-stoichiometric Circular Plasmid"
                     else:
                         classification = "Circular Plasmid"
+                elif status == "LINEAR":
+                    classification = "Linear Plasmid / Replicon"
                 else:
                     if copy_number < 0.5:
                         classification = "Low-Coverage Debris"
                     elif spanning_reads == 0 and broken_reads == 0:
                         classification = "Linear Fragment"
                     elif broken_reads > 10:
-                        if copy_number > 10.0:
+                        if copy_number >= 10.0:
                             classification = "Misassembled High-Copy Plasmid"
                         else:
                             classification = "Misassembled Junction"
