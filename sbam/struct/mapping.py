@@ -85,62 +85,63 @@ class ReadAligner:
             "-",
         ]
 
-        mm_err_file = None
-        sort_err_file = None
+        mm_err_path = None
+        sort_err_path = None
         p_minimap = None
         p_sort = None
 
         try:
-            mm_err_file = tempfile.NamedTemporaryFile(
+            with tempfile.NamedTemporaryFile(
                 mode="w+", suffix="_minimap2.log", delete=False, encoding="utf-8"
-            )
-            sort_err_file = tempfile.NamedTemporaryFile(
+            ) as mm_err_file, tempfile.NamedTemporaryFile(
                 mode="w+", suffix="_samtools_sort.log", delete=False, encoding="utf-8"
-            )
+            ) as sort_err_file:
+                mm_err_path = mm_err_file.name
+                sort_err_path = sort_err_file.name
 
-            try:
-                p_minimap = subprocess.Popen(
-                    minimap_cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=mm_err_file,
-                )
-            except FileNotFoundError as exc:
-                raise AlignmentError(
-                    f"Dependency missing (minimap2). Ensure minimap2 is in PATH. Details: {exc}"
-                ) from exc
+                try:
+                    p_minimap = subprocess.Popen(
+                        minimap_cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=mm_err_file,
+                    )
+                except FileNotFoundError as exc:
+                    raise AlignmentError(
+                        f"Dependency missing (minimap2). Ensure minimap2 is in PATH. Details: {exc}"
+                    ) from exc
 
-            try:
-                p_sort = subprocess.Popen(
-                    sort_cmd,
-                    stdin=p_minimap.stdout,
-                    stdout=subprocess.PIPE,
-                    stderr=sort_err_file,
-                )
-            except FileNotFoundError as exc:
-                p_minimap.terminate()
-                p_minimap.wait()
-                raise AlignmentError(
-                    f"Dependency missing (samtools). Ensure samtools is in PATH. Details: {exc}"
-                ) from exc
+                try:
+                    p_sort = subprocess.Popen(
+                        sort_cmd,
+                        stdin=p_minimap.stdout,
+                        stdout=subprocess.PIPE,
+                        stderr=sort_err_file,
+                    )
+                except FileNotFoundError as exc:
+                    p_minimap.terminate()
+                    p_minimap.wait()
+                    raise AlignmentError(
+                        f"Dependency missing (samtools). Ensure samtools is in PATH. Details: {exc}"
+                    ) from exc
 
-            if p_minimap.stdout is not None:
-                p_minimap.stdout.close()
+                if p_minimap.stdout is not None:
+                    p_minimap.stdout.close()
 
-            p_sort.communicate()
-            minimap_rc = p_minimap.wait()
+                p_sort.communicate()
+                minimap_rc = p_minimap.wait()
 
-            mm_err_file.flush()
-            sort_err_file.flush()
-            _log_tool_output("minimap2", mm_err_file.name)
-            _log_tool_output("samtools sort", sort_err_file.name)
+                mm_err_file.flush()
+                sort_err_file.flush()
+                _log_tool_output("minimap2", mm_err_path)
+                _log_tool_output("samtools sort", sort_err_path)
 
-            if minimap_rc != 0 or p_sort.returncode != 0:
-                mm_tail = _read_tail(mm_err_file.name)
-                sort_tail = _read_tail(sort_err_file.name)
-                raise AlignmentError(
-                    f"Alignment failed (minimap2={minimap_rc}, samtools={p_sort.returncode}).\n"
-                    f"{mm_tail}\n{sort_tail}".strip()
-                )
+                if minimap_rc != 0 or p_sort.returncode != 0:
+                    mm_tail = _read_tail(mm_err_path)
+                    sort_tail = _read_tail(sort_err_path)
+                    raise AlignmentError(
+                        f"Alignment failed (minimap2={minimap_rc}, samtools={p_sort.returncode}).\n"
+                        f"{mm_tail}\n{sort_tail}".strip()
+                    )
 
             logger.info(" > [samtools] Alignment sorted and saved to: %s", self.bam_path)
 
@@ -173,11 +174,10 @@ class ReadAligner:
                 p_sort.wait()
             raise AlignmentError(f"Alignment pipeline failed: {exc}") from exc
         finally:
-            for tmp in (mm_err_file, sort_err_file):
-                if tmp is not None:
+            for tmp_path in (mm_err_path, sort_err_path):
+                if tmp_path is not None:
                     try:
-                        tmp.close()
-                        if os.path.exists(tmp.name):
-                            os.remove(tmp.name)
+                        if os.path.exists(tmp_path):
+                            os.remove(tmp_path)
                     except OSError:
                         pass

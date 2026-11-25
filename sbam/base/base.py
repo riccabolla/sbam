@@ -14,7 +14,7 @@ from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
 from scipy.stats import binomtest, fisher_exact
 
-from sbam.utils import compute_empirical_qv, revcomp, wilson_lower_bound
+from sbam.utils import compute_empirical_qv, wilson_lower_bound
 
 logger = logging.getLogger("sbam")
 
@@ -87,14 +87,13 @@ def _share_core_or_substring(m1_pair: str, m2_pair: str) -> bool:
         for b in parts2:
             if a in b or b in a:
                 return True
-            if len(a) >= 6 and len(b) >= 6:
-                if (
-                    a[1:] == b[:-1]
-                    or b[1:] == a[:-1]
-                    or a[1:] == b[1:]
-                    or a[:-1] == b[:-1]
-                ):
-                    return True
+            if len(a) >= 6 and len(b) >= 6 and (
+                a[1:] == b[:-1]
+                or b[1:] == a[:-1]
+                or a[1:] == b[1:]
+                or a[:-1] == b[:-1]
+            ):
+                return True
     return False
 
 
@@ -420,8 +419,8 @@ class BaseAccuracy:
                     bam_ref_len = bam.get_reference_length(bam_contig_id)
                     if isinstance(bam_ref_len, int) and bam_ref_len > orig_len:
                         return min(bam_ref_len - orig_len, orig_len)
-        except Exception:
-            pass
+        except (OSError, ValueError, KeyError, AttributeError, TypeError) as exc:
+            logger.debug("Could not inspect BAM buffer length for %s: %s", bam_contig_id, exc)
         return 0
 
     def _get_buffer_length(self) -> int:
@@ -434,8 +433,8 @@ class BaseAccuracy:
                 lengths = getattr(bam, "lengths", None)
                 if isinstance(refs, (list, tuple)) and isinstance(lengths, (list, tuple)):
                     return dict(zip(refs, lengths))
-        except Exception:
-            pass
+        except (OSError, ValueError, KeyError, AttributeError, TypeError) as exc:
+            logger.debug("Could not read BAM reference lengths from %s: %s", self.bam_path, exc)
         return None
 
     def _summarize_contig(

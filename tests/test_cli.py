@@ -1,4 +1,5 @@
 import json
+
 import pytest
 
 from sbam import __version__

@@ -1,4 +1,3 @@
-import numpy as np
 import pysam
 import pytest
 
@@ -43,7 +42,7 @@ def test_cigar_eqx_and_m_and_supplementary_exclusion_and_tracks(tmp_path):
 
     # Verify GenomeStructure drops 0-length contig (Bug 7)
     gs = GenomeStructure(str(fasta_path), str(tmp_path))
-    cyclic_fa, orig_lengths = gs.create_cyclic_buffer(buffer_size=100)
+    _cyclic_fa, orig_lengths = gs.create_cyclic_buffer(buffer_size=100)
     assert "empty_contig" not in orig_lengths
     assert orig_lengths == {"chr1": 1000}
 

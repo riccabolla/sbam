@@ -1,6 +1,8 @@
 from unittest.mock import MagicMock, patch
+
 import numpy as np
 import pytest
+
 from sbam.base.base import BaseAccuracy
 
 

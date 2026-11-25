@@ -371,7 +371,7 @@ def run_summarize(argv: list[str]) -> int:
         try:
             with open(jpath, "r", encoding="utf-8") as jf:
                 data = json.load(jf)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             print(f"[WARNING] Skipping unreadable JSON {jpath}: {e}", file=sys.stderr)
             continue
 

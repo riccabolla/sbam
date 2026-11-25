@@ -25,7 +25,7 @@ def export_masked_regions_bed(path: str, masked_regions: list[dict[str, Any]]) -
                 f"{reg.get('category', 'MASKED')}|{reg.get('reason', '')}"
                 .replace("\t", " ")
             )
-            score = int(round(float(reg.get("mean_concordance", 0.0)) * 10))
+            score = round(float(reg.get("mean_concordance", 0.0)) * 10)
             depth_label = f"depth={reg.get('mean_depth', 0.0):.1f}x;concord={reg.get('mean_concordance', 0.0):.1f}%"
             fh.write(
                 f"{reg['contig']}\t{int(reg['start'])}\t{int(reg['end'])}\t"
@@ -88,8 +88,7 @@ def export_consensus_errors_vcf(
         fh.write("##fileformat=VCFv4.2\n")
         fh.write("##source=sbam\n")
         if contig_lengths:
-            for cid, clen in contig_lengths.items():
-                fh.write(f"##contig=<ID={cid},length={int(clen)}>\n")
+            fh.writelines(f"##contig=<ID={cid},length={int(clen)}>\n" for cid, clen in contig_lengths.items())
         fh.write('##INFO=<ID=DP,Number=1,Type=Integer,Description="Total read depth">\n')
         fh.write('##INFO=<ID=CONC,Number=1,Type=Float,Description="Read-to-assembly concordance">\n')
         fh.write('##INFO=<ID=ETYPE,Number=1,Type=String,Description="Dominant disagreement type">\n')

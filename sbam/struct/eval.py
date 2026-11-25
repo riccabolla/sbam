@@ -190,8 +190,7 @@ class JunctionEvaluator:
                     logger.warning("Contig %s not found in BAM file.", target_contig)
 
         baseline_depth = raw_stats.get(primary_contig, {}).get("avg_depth", 1.0)
-        if baseline_depth < 1.0:
-            baseline_depth = 1.0
+        baseline_depth = max(baseline_depth, 1.0)
 
         for contig_id, stats in raw_stats.items():
             orig_length = stats["length"]
