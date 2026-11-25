@@ -88,4 +88,37 @@ Size of the cyclic buffer edge (bp) for mapping (default: 50000)
 
 Sequencing technology used (default: map-ont)
 
+--min-concordance 
+
+Minimum empirical read-to-assembly base concordance
+
+--depth-variance
+
+Fold-change threshold relative to median contig depth
+
+--k-list [4,5,6]
+
+Comma separated k-mer sizes to test for systematic motif discordance
+
+--min-ori-length (Default: 500000)
+
+Minimum contig length to run chromosomal GC-skew replication analysis
+
+--linear (Default: FALSE)
+
+Treat replicons as naturally linear
+
+--offline (Default: FALSE)
+
+render all polar GC-skew architecture maps using sbam inline SVG engine
+
+--clean / --remove-intermediates (Deafult: FALSE)
+
+Deletes intermediate files
+
+--log / --log-file (Default: FALSE)
+
+Keep SBAM log file
+
+
 ```
