@@ -84,7 +84,7 @@ def test_palindromic_kmer_counted_once_per_site(mock_seqio, mock_chunk):
     """
     Regression Test: Ensures even-length palindromic k-mers (e.g., 'TCGA') are
     counted exactly once per genomic occurrence (never double-counted across strands)
-    and that fold_increase equals error_rate / baseline_discordance_rate.
+    and that fold_increase uses the two-central-base null rate 1 - (1 - p)^2.
     """
     unit = "AAAATCGAAAAA"  # 12 bp unit containing one 'TCGA' at indices 4..8
     repeats = 200
@@ -124,6 +124,5 @@ def test_palindromic_kmer_counted_once_per_site(mock_seqio, mock_chunk):
     assert hit["occurrences"] == 200
     assert hit["discordant_count"] == 200
     assert hit["is_palindrome"] is True
-    assert hit["fold_increase"] == pytest.approx(
-        hit["error_rate"] / engine.baseline_discordance_rate
-    )
+    expected_p_null = 1.0 - (1.0 - engine.baseline_discordance_rate) ** 2
+    assert hit["fold_increase"] == pytest.approx(hit["error_rate"] / expected_p_null)
