@@ -3,14 +3,19 @@ import pytest
 from sbam.struct.eval import JunctionEvaluator
 
 
-def make_read(length):
-    """Creates a mock primary read for depth calculations."""
+def make_interior_read(start, end):
+    """Creates a mock primary read away from the junction for depth calculations."""
     r = MagicMock()
     r.is_unmapped = False
     r.is_secondary = False
     r.is_supplementary = False
-    r.reference_length = length
-    r.query_alignment_length = length
+    r.is_qcfail = False
+    r.is_duplicate = False
+    r.reference_start = start
+    r.reference_end = end
+    r.reference_length = end - start
+    r.query_alignment_length = end - start
+    r.cigartuples = [(0, end - start)]
     return r
 
 
@@ -23,9 +28,13 @@ def make_junction(start, end, clipped=False):
     r.is_unmapped = False
     r.is_secondary = False
     r.is_supplementary = False
+    r.is_qcfail = False
+    r.is_duplicate = False
     r.reference_start = start
     r.reference_end = end
     aligned_span = max(1, end - start)
+    r.reference_length = aligned_span
+    r.query_alignment_length = aligned_span
     if clipped:
         r.cigartuples = [(4, 100), (0, aligned_span), (4, 100)]
     else:
@@ -38,6 +47,7 @@ def mock_bam():
     with patch("sbam.struct.eval.pysam.AlignmentFile") as mock_pysam:
         bam_instance = MagicMock()
         bam_instance.__enter__.return_value = bam_instance
+        bam_instance.references = None
         mock_pysam.return_value = bam_instance
         yield bam_instance
 
@@ -47,19 +57,12 @@ def test_junction_scoring_chromosome(mock_bam):
     orig_lengths = {"contig_1": 5000000}
     evaluator = JunctionEvaluator("dummy.bam", orig_lengths)
 
-    depth_reads = [make_read(5000000) for _ in range(100)]
-
-    junction_reads = (
-        [make_junction(4998000, 5002000, clipped=False) for _ in range(70)]  # 70 Spanning
-        + [make_junction(4999500, 5000500, clipped=True) for _ in range(30)]  # 30 Clipped/Broken
+    reads = (
+        [make_interior_read(1000, 4900000) for _ in range(100)]
+        + [make_junction(4998000, 5002000, clipped=False) for _ in range(70)]
+        + [make_junction(4999500, 5000500, clipped=True) for _ in range(30)]
     )
-
-    def fetch_side_effect(contig, start=None, end=None):
-        if start is None:
-            return depth_reads
-        return junction_reads
-
-    mock_bam.fetch.side_effect = fetch_side_effect
+    mock_bam.fetch.return_value = reads
 
     results = evaluator.evaluate_junctions()
 
@@ -74,19 +77,12 @@ def test_junction_scoring_plasmid_fail(mock_bam):
     orig_lengths = {"plasmid_1": 15000}
     evaluator = JunctionEvaluator("dummy.bam", orig_lengths)
 
-    depth_reads = [make_read(15000) for _ in range(100)]
-
-    junction_reads = (
-        [make_junction(14000, 16000, clipped=False) for _ in range(20)]  # 20 Spanning
-        + [make_junction(14900, 15100, clipped=True) for _ in range(80)]  # 80 Clipped/Broken
+    reads = (
+        [make_interior_read(100, 14000) for _ in range(100)]
+        + [make_junction(14000, 16000, clipped=False) for _ in range(20)]
+        + [make_junction(14900, 15100, clipped=True) for _ in range(80)]
     )
-
-    def fetch_side_effect(contig, start=None, end=None):
-        if start is None:
-            return depth_reads
-        return junction_reads
-
-    mock_bam.fetch.side_effect = fetch_side_effect
+    mock_bam.fetch.return_value = reads
 
     results = evaluator.evaluate_junctions()
 
@@ -104,20 +100,13 @@ def test_natural_unclipped_read_ends_ignored(mock_bam):
     orig_lengths = {"plasmid_2": 250000}
     evaluator = JunctionEvaluator("dummy.bam", orig_lengths)
 
-    depth_reads = [make_read(250000) for _ in range(100)]
-
-    junction_reads = (
-        [make_junction(248000, 252000, clipped=False) for _ in range(97)]  # 97 Spanning
-        + [make_junction(249500, 250500, clipped=False) for _ in range(66)]  # 66 Natural unclipped ends
-        + [make_junction(249500, 250500, clipped=True) for _ in range(7)]  # 7 True clipped reads
+    reads = (
+        [make_interior_read(1000, 240000) for _ in range(100)]
+        + [make_junction(248000, 252000, clipped=False) for _ in range(97)]
+        + [make_junction(249500, 250500, clipped=False) for _ in range(66)]
+        + [make_junction(249500, 250500, clipped=True) for _ in range(7)]
     )
-
-    def fetch_side_effect(contig, start=None, end=None):
-        if start is None:
-            return depth_reads
-        return junction_reads
-
-    mock_bam.fetch.side_effect = fetch_side_effect
+    mock_bam.fetch.return_value = reads
 
     results = evaluator.evaluate_junctions()
 
