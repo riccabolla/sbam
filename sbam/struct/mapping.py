@@ -1,29 +1,70 @@
+"""Long-read alignment wrapper using minimap2 and samtools."""
+
+from __future__ import annotations
+
+import logging
 import os
 import subprocess
-import sys
 import tempfile
+
+logger = logging.getLogger("sbam")
+
+
+class AlignmentError(RuntimeError):
+    """Raised when read alignment or BAM indexing fails."""
+
+
+def _read_tail(path: str, lines: int = 25) -> str:
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            return "".join(fh.readlines()[-lines:])
+    except OSError:
+        return ""
+
+
+def _log_tool_output(label: str, path: str) -> None:
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            content = fh.read().strip()
+        if content:
+            logger.debug("--- [%s stderr] ---\n%s", label, content)
+    except OSError:
+        pass
 
 
 class ReadAligner:
-    def __init__(self, reads_path, cyclic_fasta_path, outdir, threads=4, log_path=None):
+    """Aligns long reads to a cyclic or linear reference and writes a sorted, indexed BAM."""
+
+    def __init__(
+        self,
+        reads_path: str,
+        reference_path: str,
+        outdir: str,
+        threads: int = 4,
+        log_path: str | None = None,
+        is_cyclic: bool = True,
+    ):
         self.reads = reads_path
-        self.reference = cyclic_fasta_path
+        self.reference = reference_path
         self.outdir = outdir
         self.threads = threads
         self.bam_path = os.path.join(self.outdir, "alignment.sorted.bam")
         self.log_path = log_path
+        self.is_cyclic = is_cyclic
 
-    def run_mapping(self, read_type="map-ont"):
+    def run_mapping(self, read_type: str = "map-ont") -> str:
         """
-        Runs minimap2 and pipes output to samtools to create a sorted, indexed BAM.
-        If self.log_path is set, appends minimap2 and samtools stderr to the unified log file;
-        otherwise uses a temporary file that is automatically removed on completion.
+        Run minimap2 (`--eqx --secondary=no`) piped to `samtools sort --write-index`.
+        Raises `AlignmentError` on missing dependencies or non-zero exit status.
         """
-        print(" > [minimap2] Aligning reads to cyclic reference...")
+        ref_kind = "cyclic" if self.is_cyclic else "linear"
+        logger.info(" > [minimap2] Aligning reads to %s reference...", ref_kind)
 
         minimap_cmd = [
             "minimap2",
             "-a",
+            "--eqx",
+            "--secondary=no",
             "-x",
             read_type,
             "-t",
@@ -32,83 +73,111 @@ class ReadAligner:
             self.reads,
         ]
 
+        bai_path = f"{self.bam_path}.bai"
         sort_cmd = [
             "samtools",
             "sort",
+            "--write-index",
             "-@",
             str(self.threads),
             "-o",
-            self.bam_path,
+            f"{self.bam_path}##idx##{bai_path}",
             "-",
         ]
 
-        temp_err_file = None
-        try:
-            if self.log_path:
-                err_stream = open(self.log_path, "a", encoding="utf-8")
-                err_stream.write("\n--- [minimap2 / samtools alignment log] ---\n")
-                err_stream.flush()
-            else:
-                temp_err_file = tempfile.NamedTemporaryFile(
-                    mode="w+", suffix="_align.log", delete=False, encoding="utf-8"
-                )
-                err_stream = temp_err_file
+        mm_err_path = None
+        sort_err_path = None
+        p_minimap = None
+        p_sort = None
 
-            try:
-                p_minimap = subprocess.Popen(
-                    minimap_cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=err_stream,
-                )
-                p_sort = subprocess.Popen(
-                    sort_cmd,
-                    stdin=p_minimap.stdout,
-                    stdout=subprocess.PIPE,
-                    stderr=err_stream,
-                )
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w+", suffix="_minimap2.log", delete=False, encoding="utf-8"
+            ) as mm_err_file, tempfile.NamedTemporaryFile(
+                mode="w+", suffix="_samtools_sort.log", delete=False, encoding="utf-8"
+            ) as sort_err_file:
+                mm_err_path = mm_err_file.name
+                sort_err_path = sort_err_file.name
+
+                try:
+                    p_minimap = subprocess.Popen(
+                        minimap_cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=mm_err_file,
+                    )
+                except FileNotFoundError as exc:
+                    raise AlignmentError(
+                        f"Dependency missing (minimap2). Ensure minimap2 is in PATH. Details: {exc}"
+                    ) from exc
+
+                try:
+                    p_sort = subprocess.Popen(
+                        sort_cmd,
+                        stdin=p_minimap.stdout,
+                        stdout=subprocess.PIPE,
+                        stderr=sort_err_file,
+                    )
+                except FileNotFoundError as exc:
+                    p_minimap.terminate()
+                    p_minimap.wait()
+                    raise AlignmentError(
+                        f"Dependency missing (samtools). Ensure samtools is in PATH. Details: {exc}"
+                    ) from exc
 
                 if p_minimap.stdout is not None:
                     p_minimap.stdout.close()
 
                 p_sort.communicate()
                 minimap_rc = p_minimap.wait()
-            finally:
-                err_stream.flush()
-                if self.log_path:
-                    err_stream.close()
 
-            if minimap_rc != 0 or p_sort.returncode != 0:
-                err_source = self.log_path if self.log_path else temp_err_file.name
-                with open(err_source, "r", encoding="utf-8", errors="replace") as ef:
-                    err_tail = "".join(ef.readlines()[-25:])
-                print(
-                    f"[ERROR] Alignment failed (minimap2={minimap_rc}, samtools={p_sort.returncode}):\n{err_tail}",
-                    file=sys.stderr,
+                mm_err_file.flush()
+                sort_err_file.flush()
+                _log_tool_output("minimap2", mm_err_path)
+                _log_tool_output("samtools sort", sort_err_path)
+
+                if minimap_rc != 0 or p_sort.returncode != 0:
+                    mm_tail = _read_tail(mm_err_path)
+                    sort_tail = _read_tail(sort_err_path)
+                    raise AlignmentError(
+                        f"Alignment failed (minimap2={minimap_rc}, samtools={p_sort.returncode}).\n"
+                        f"{mm_tail}\n{sort_tail}".strip()
+                    )
+
+            logger.info(" > [samtools] Alignment sorted and saved to: %s", self.bam_path)
+
+            if not os.path.exists(bai_path):
+                index_cmd = ["samtools", "index", "-@", str(self.threads), self.bam_path]
+                idx_proc = subprocess.run(
+                    index_cmd,
+                    capture_output=True,
+                    text=True,
+                    check=False,
                 )
-                sys.exit(1)
-
-            print(f" > [samtools] Alignment sorted and saved to: {self.bam_path}")
-
-            index_cmd = ["samtools", "index", self.bam_path]
-            subprocess.run(index_cmd, check=True)
-            print(" > [samtools] BAM indexed successfully.")
+                if idx_proc.stderr:
+                    logger.debug("--- [samtools index stderr] ---\n%s", idx_proc.stderr.strip())
+                if idx_proc.returncode != 0:
+                    raise AlignmentError(
+                        f"samtools index failed ({idx_proc.returncode}): {idx_proc.stderr.strip()}"
+                    )
+            logger.info(" > [samtools] BAM indexed successfully.")
 
             return self.bam_path
 
-        except FileNotFoundError as e:
-            print(
-                f"[ERROR] Dependency missing. Ensure minimap2 and samtools are in your PATH. Details: {e}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        except Exception as e:
-            print(f"[ERROR] Alignment pipeline failed: {e}", file=sys.stderr)
-            sys.exit(1)
+        except AlignmentError:
+            raise
+        except Exception as exc:
+            if p_minimap is not None and p_minimap.poll() is None:
+                p_minimap.terminate()
+                p_minimap.wait()
+            if p_sort is not None and p_sort.poll() is None:
+                p_sort.terminate()
+                p_sort.wait()
+            raise AlignmentError(f"Alignment pipeline failed: {exc}") from exc
         finally:
-            if temp_err_file is not None:
-                try:
-                    temp_err_file.close()
-                    if os.path.exists(temp_err_file.name):
-                        os.remove(temp_err_file.name)
-                except OSError:
-                    pass
+            for tmp_path in (mm_err_path, sort_err_path):
+                if tmp_path is not None:
+                    try:
+                        if os.path.exists(tmp_path):
+                            os.remove(tmp_path)
+                    except OSError:
+                        pass

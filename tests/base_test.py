@@ -1,14 +1,35 @@
 from unittest.mock import MagicMock, patch
+
 import numpy as np
 import pytest
+
 from sbam.base.base import BaseAccuracy
 
 
-@patch("sbam.base.base.mp.Pool")
+def _chunk_tuple(contig_id, seq_len, raw_depths, raw_matches):
+    zeros = np.zeros(seq_len, dtype=np.int32)
+    mismatches = np.maximum(0, raw_depths - raw_matches).astype(np.int32)
+    return (
+        contig_id,
+        0,
+        seq_len,
+        raw_depths,
+        raw_matches,
+        mismatches,
+        zeros,
+        zeros,
+        raw_depths,
+        raw_matches,
+        zeros,
+        zeros,
+    )
+
+
+@patch("sbam.base.base._profile_chunk")
 @patch("sbam.base.base.SeqIO.parse")
-def test_p0_end_to_end_motif_recovery_regression(mock_seqio, mock_pool):
+def test_p0_end_to_end_motif_recovery_regression(mock_seqio, mock_chunk):
     """
-    P0 Regression Test: Runs analyze_motifs() end-to-end on a synthetic pileup
+    P0 Regression Test: Runs analyze_motifs() end-to-end on a synthetic profile
     with injected errors at 'CCAGG'. Verifies that point motif discordances are
     not masked out and that majority/minority counters reconcile.
     """
@@ -25,14 +46,10 @@ def test_p0_end_to_end_motif_recovery_regression(mock_seqio, mock_pool):
     raw_depths = np.full(seq_len, 100, dtype=np.int32)
     raw_matches = np.full(seq_len, 99, dtype=np.int32)
 
-    # Inject 60% concordance (sub-consensus bias) at 195 sites and 40% (<50% consensus error) at 5 sites
     for i in range(repeats):
         raw_matches[i * len(unit) + 7] = 40 if i < 5 else 60
 
-    pool_instance = MagicMock()
-    pool_instance.__enter__.return_value = pool_instance
-    pool_instance.map.return_value = [(0, seq_len, raw_depths, raw_matches)]
-    mock_pool.return_value = mock_instance = pool_instance
+    mock_chunk.return_value = _chunk_tuple("contig_1", seq_len, raw_depths, raw_matches)
 
     engine = BaseAccuracy(
         "dummy.bam",
@@ -42,7 +59,9 @@ def test_p0_end_to_end_motif_recovery_regression(mock_seqio, mock_pool):
         min_concordance=0.85,
         canonical=True,
     )
-    with patch.object(engine, "_get_buffer_length", return_value=0):
+    with patch.object(engine, "_get_bam_ref_lengths", return_value=None), patch.object(
+        engine, "_get_buffer_length", return_value=0
+    ):
         families = engine.analyze_motifs(min_occurrences=100, min_discordant_count=10)
 
     assert engine.evaluated_bases == seq_len
@@ -59,13 +78,13 @@ def test_p0_end_to_end_motif_recovery_regression(mock_seqio, mock_pool):
     assert families[0]["consensus_error_count"] == 5
 
 
-@patch("sbam.base.base.mp.Pool")
+@patch("sbam.base.base._profile_chunk")
 @patch("sbam.base.base.SeqIO.parse")
-def test_palindromic_kmer_counted_once_per_site(mock_seqio, mock_pool):
+def test_palindromic_kmer_counted_once_per_site(mock_seqio, mock_chunk):
     """
     Regression Test: Ensures even-length palindromic k-mers (e.g., 'TCGA') are
     counted exactly once per genomic occurrence (never double-counted across strands)
-    and that fold_increase equals error_rate / baseline_discordance_rate.
+    and that fold_increase uses the two-central-base null rate 1 - (1 - p)^2.
     """
     unit = "AAAATCGAAAAA"  # 12 bp unit containing one 'TCGA' at indices 4..8
     repeats = 200
@@ -84,10 +103,7 @@ def test_palindromic_kmer_counted_once_per_site(mock_seqio, mock_pool):
     for i in range(repeats):
         raw_matches[i * len(unit) + 6] = 60
 
-    pool_instance = MagicMock()
-    pool_instance.__enter__.return_value = pool_instance
-    pool_instance.map.return_value = [(0, seq_len, raw_depths, raw_matches)]
-    mock_pool.return_value = pool_instance
+    mock_chunk.return_value = _chunk_tuple("contig_1", seq_len, raw_depths, raw_matches)
 
     engine = BaseAccuracy(
         "dummy.bam",
@@ -97,16 +113,16 @@ def test_palindromic_kmer_counted_once_per_site(mock_seqio, mock_pool):
         min_concordance=0.85,
         canonical=True,
     )
-    with patch.object(engine, "_get_buffer_length", return_value=0):
+    with patch.object(engine, "_get_bam_ref_lengths", return_value=None), patch.object(
+        engine, "_get_buffer_length", return_value=0
+    ):
         families = engine.analyze_motifs(min_occurrences=100, min_discordant_count=10)
 
     tcga_hits = [f for f in families if f["motif"] == "TCGA/TCGA"]
     assert len(tcga_hits) == 1
     hit = tcga_hits[0]
-    # Must be 200 occurrences (once per site), NOT 400!
     assert hit["occurrences"] == 200
     assert hit["discordant_count"] == 200
     assert hit["is_palindrome"] is True
-    assert hit["fold_increase"] == pytest.approx(
-        hit["error_rate"] / engine.baseline_discordance_rate
-    )
+    expected_p_null = 1.0 - (1.0 - engine.baseline_discordance_rate) ** 2
+    assert hit["fold_increase"] == pytest.approx(hit["error_rate"] / expected_p_null)

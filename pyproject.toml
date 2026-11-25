@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sbam"
+version = "0.3.0"
+description = "Structural and Base-Level analysis of long-read microbial assemblies"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+dependencies = [
+    "pysam>=0.22.0",
+    "numpy>=1.24.0",
+    "scipy>=1.11.0",
+    "biopython>=1.81",
+    "jinja2>=3.1.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+]
+
+[project.scripts]
+sbam = "sbam.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["sbam*"]
+
+[tool.setuptools.package-data]
+"sbam.report" = ["templates/*.j2"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
+
+[tool.ruff]
+line-length = 110
+target-version = "py39"
